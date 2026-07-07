@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package embedding;
+
+option go_package = "github.com/example/embedding";
+option java_multiple_files = true;
+option java_package = "com.example.embedding";
+option java_outer_classname = "EmbeddingProto";
+
+// The embedding service definition
+service EmbeddingService {
+
+  // Embed query with hybrid embedding (dense + sparse + colbert)
+  rpc EmbedHybrid (EmbedQueryRequest) returns (EmbedHybridResponse) {}
+  
+  // Embed documents with hybrid embedding
+  rpc EmbedHybridDocuments (EmbedDocumentsRequest) returns (EmbedHybridDocumentsResponse) {}
+}
+
+// Request message for embed query
+message EmbedQueryRequest {
+  string text = 1;
+  string model = 2;
+}
+
+// Request message for embed documents
+message EmbedDocumentsRequest {
+  repeated string texts = 1;
+  string model = 2;
+}
+
+// Response message for hybrid embedding
+message EmbedHybridResponse {
+  repeated float dense_vector = 1;
+  map<string, float> sparse_weights = 2;
+  repeated FloatVector colbert_vectors = 3;
+  string model = 4;
+  float processing_time = 5;
+}
+
+// Response message for hybrid document embeddings
+message EmbedHybridDocumentsResponse {
+  repeated HybridEmbedding embeddings = 1;
+  string model = 2;
+  float processing_time = 3;
+}
+
+// Helper message for float vectors
+message FloatVector {
+  repeated float values = 1;
+}
+
+// Helper message for hybrid embedding results
+message HybridEmbedding {
+  repeated float dense_vector = 1;
+  map<string, float> sparse_weights = 2;
+  repeated FloatVector colbert_vectors = 3;
+}

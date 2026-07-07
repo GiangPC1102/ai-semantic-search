@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1.7
+
+# ============================================================
+# Stage 1: Build Python deps with uv
+# ============================================================
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    zlib1g-dev \
+    libffi-dev \
+    pkg-config \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY pyproject.toml uv.lock ./
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+
+# uv sync respects [tool.uv] override-dependencies, skipping fast-plaid
+# on linux/aarch64 where no manylinux wheel is available (Mac Docker ARM64).
+RUN pip install --no-cache-dir --upgrade pip uv && \
+    uv sync --frozen --no-install-project --no-dev
+
+# ============================================================
+# Stage 2: Runtime image
+# ============================================================
+FROM python:3.12-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    VIRTUAL_ENV="/opt/venv" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app" \
+    CUDA_VISIBLE_DEVICES="" \
+    USE_CPU="true" \
+    USE_FP16="false" \
+    ENV="dev"
+
+RUN groupadd -r appuser && \
+    useradd -r -g appuser -m -d /home/appuser appuser
+
+WORKDIR /app
+
+RUN mkdir -p /app/app /app/core /app/grpc_generated /app/models && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 50051
+
+CMD ["python", "-m", "app.server"]

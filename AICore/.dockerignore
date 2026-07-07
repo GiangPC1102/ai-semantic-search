@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.py[cod]
+*.egg-info
+.git
+.gitignore
+logging_files
+docker
+README.md
+uv.lock
+.python-version

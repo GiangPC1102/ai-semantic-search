@@ -5,6 +5,7 @@ from core.config import settings
 from core.logger import logger
 import json
 import uuid
+
 class VectorStore:
     def __init__(self):
         self.qdrant_client = QdrantClient(
@@ -76,6 +77,15 @@ class VectorStore:
             }
         )
 
+    def _create_sparse_vector(sparse_weights: dict) -> models.SparseVector:
+        """BGE-M3 lexical_weights keys are token ids as strings."""
+        indices = []
+        values = []
+        for token_id, weight in sparse_weights.items():
+            indices.append(int(token_id))
+            values.append(float(weight))
+        return models.SparseVector(indices=indices, values=values)
+
     def upsert(self, collection_name: str, data: list[dict], batch_size: int = 100):
         # Create hybrid embeddings (dense, sparse, colbert) for current batch
         texts = data['text']
@@ -100,7 +110,7 @@ class VectorStore:
                 colbert_vectors.append(hybrid_embedding['colbert_vectors'])
                 sparse_vectors.append(self._create_sparse_vector(hybrid_embedding['sparse_weights']))
                 payloads.append(json.loads(json.dumps(
-                    {"text": text},
+                    {"text": text, **{k: v for k, v in metadata.items()}},
                     default=str,
                 )))
 
@@ -120,9 +130,7 @@ class VectorStore:
         except Exception as upsert_error:
             raise Exception(f"Error upserting data to collection {collection_name}: {upsert_error}")
     
-    def bulk_upsert(self, collection_name: str, data: list[dict]):
-        pass
-    
+
     def poi_search(
         self, 
         collection_name: str, 
@@ -183,19 +191,6 @@ class VectorStore:
             results = self.qdrant_client.query_points(**query_params)
             end_time = time.time()
             logger.info(f"Time taken for hybrid search: {end_time - start_time} seconds")
-
-            # distill_results = []
-            # for point in results.points:
-                
-            #     metadata = {k: v for k, v in point.payload.items() if k != "text"}
-            #     metadata["chunk_id"] = str(point.id) 
-
-            #     distill_results.append({
-            #         "content": point.payload.get("text", ""),
-            #         "metadata": metadata,
-            #         "score": point.score
-            #     })
-            # results = distill_results
 
             return results
         except Exception as e:

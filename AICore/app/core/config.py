@@ -37,6 +37,15 @@ class BaseConfig:
         self.EMBEDDING_SERVICE_RETRY_COUNT: int = int(os.getenv("EMBEDDING_SERVICE_RETRY_COUNT", "3"))
         self.EMBEDDING_SERVICE_TYPE: bool = bool(os.getenv("EMBEDDING_SERVICE_TYPE", "False"))
 
+        # LLM Gateway (LiteLLM)
+        self.LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
+        self.LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+        self.LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+        self.LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))
+
+        # Provider API keys
+        self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
 
 class DevelopmentConfig(BaseConfig):

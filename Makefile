@@ -6,7 +6,7 @@ BLUE := \033[0;34m
 MAGENTA := \033[0;35m
 NC := \033[0m # No Color
 
-.PHONY: dev aicore-down clean-aicore-api build-aicore-api clean-build-aicore-api embedding-down clean-embedding build-embedding clean-build-embedding clean-cache clean-novol
+.PHONY: dev down aicore-down clean-aicore-api build-aicore-api clean-build-aicore-api embedding-down clean-embedding build-embedding clean-build-embedding clean-cache clean-novol
 
 dev:
 	@echo "$(GREEN)Building and starting all services...$(NC)"
@@ -16,6 +16,11 @@ dev:
 	@echo "  - qdrant:     http://localhost:6333"
 	@echo "  - postgres:   localhost:5432 (user/db: aicore)"
 	@echo "  - embedding:  grpc://localhost:50051"
+
+down:
+	@echo "$(YELLOW)Stopping all services...$(NC)"
+	docker compose down --remove-orphans
+	@echo "$(GREEN)All services stopped.$(NC)"
 
 aicore-down:
 	@echo "$(YELLOW)Stopping aicore services...$(NC)"

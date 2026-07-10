@@ -1,0 +1,20 @@
+[project]
+name = "aicore"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.5",
+    "fastapi>=0.139.0",
+    "litellm>=1.91.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.3",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.2.2",
+    "qdrant-client>=1.18.0",
+    "sqlalchemy>=2.0.51",
+    "tqdm>=4.68.4",
+    "uvicorn[standard]>=0.50.2",
+]

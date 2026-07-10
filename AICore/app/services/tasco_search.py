@@ -10,6 +10,7 @@ from prisma.models import Poi
 from app.core.config import settings
 from app.core.database import get_store
 from app.core.logger import logger
+from app.helpers.poi_signal_reranker import rerank_poi_hits_by_signals
 from app.helpers.query_understand import QueryUnderstandError, QueryUnderstander
 from app.schemas.tasco_search import TascoSearchItem, TascoSearchResponse
 from app.schemas.vector_search import VectorSearchHit
@@ -48,7 +49,8 @@ class TascoSearchService:
             2. Hard-filter POIs (+ opening_hours if present)
             3. Collect vectorIds from filtered POIs
             4. Parallel POI + attribute vector search
-            5. Keep POI hits that share attributes with attribute hits
+            5. Rerank POI hits by price/rating/popularity/review signals (if any)
+            6. Keep POI hits that share attributes with attribute hits
         """
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
@@ -112,6 +114,12 @@ class TascoSearchService:
         except VectorStoreError as exc:
             raise TascoSearchError(str(exc)) from exc
 
+        poi_hits = rerank_poi_hits_by_signals(
+            poi_hits,
+            poi_by_id,
+            understood.ranking_signals,
+        )
+
         matched_attribute_ids = {
             hit["attribute_id"]
             for hit in attribute_hits
@@ -159,8 +167,10 @@ class TascoSearchService:
         poi_attr_map: dict[str, set[str]],
         poi_by_id: dict[str, Poi],
     ) -> list[TascoSearchItem]:
-        """Keep POI hits that share at least one attribute with attribute search."""
-        # No attribute hits → nothing to intersect against; return empty.
+        """Keep POI hits that share attributes with attribute search, then rerank.
+
+        Ranking: more matched attributes first, then higher POI vector score.
+        """
         if not matched_attribute_ids:
             return []
 
@@ -183,10 +193,19 @@ class TascoSearchService:
                     name=hit.get("name") or (poi.name if poi else None),
                     text=hit.get("text"),
                     score=hit.get("score"),
+                    matched_attribute_count=len(overlap),
                     matched_attribute_ids=overlap,
                     payload=dict(hit.get("payload") or {}),
                 )
             )
+
+        items.sort(
+            key=lambda item: (
+                item.matched_attribute_count,
+                item.score if item.score is not None else float("-inf"),
+            ),
+            reverse=True,
+        )
         return items
 
     @staticmethod

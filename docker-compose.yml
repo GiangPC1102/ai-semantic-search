@@ -41,7 +41,6 @@ services:
     environment:
       ENV: dev
       PRISMA_HOME_DIR: /opt/prisma
-      DATABASE_URL: postgresql://aicore:aicore@postgres:5432/aicore
     volumes:
       - ./AICore/app:/app/app
     depends_on:

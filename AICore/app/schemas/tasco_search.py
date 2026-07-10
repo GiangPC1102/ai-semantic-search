@@ -41,6 +41,10 @@ class TascoSearchItem(BaseModel):
     name: str | None = None
     text: str | None = None
     score: float | None = None
+    matched_attribute_count: int = Field(
+        default=0,
+        description="Number of attributes overlapping attribute search hits",
+    )
     matched_attribute_ids: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
 

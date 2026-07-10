@@ -11,7 +11,7 @@ datasource db {
 
 model Brand {
   id          String @id @default(uuid())
-  name        String
+  name        String @unique
   category    String?
   subcategory String?
 
@@ -47,7 +47,7 @@ model Poi {
 
 model Attribute {
   id            String  @id @default(uuid())
-  attributeName String  @map("attribute_name")
+  attributeName String  @unique @map("attribute_name")
   description   String?
   vectorId      String? @map("vector_id")
 
@@ -58,7 +58,7 @@ model Attribute {
 
 model Signal {
   id          String  @id @default(uuid())
-  signalName  String  @map("signal_name")
+  signalName  String  @unique @map("signal_name")
   description String?
 
   @@map("signals")
@@ -66,7 +66,7 @@ model Signal {
 
 model Tag {
   id   String @id @default(uuid())
-  name String
+  name String @unique
 
   poiTags PoiTag[]
 

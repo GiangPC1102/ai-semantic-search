@@ -94,6 +94,35 @@ class Store:
             if matches_opening_hours_preference(poi.openHours, opening_hours_pref)
         ]
 
+    async def get_attribute_ids_by_poi_ids(
+        self,
+        poi_ids: list[str],
+    ) -> dict[str, set[str]]:
+        """Map each POI id to its linked attribute ids.
+
+        Args:
+            poi_ids: POI primary keys.
+
+        Returns:
+            ``{poi_id: {attribute_id, ...}}`` for POIs that have attributes.
+        """
+        if not poi_ids:
+            return {}
+
+        await self.connect()
+        try:
+            links = await self._db.poiattribute.find_many(
+                where={"poiId": {"in": poi_ids}},
+            )
+        except PrismaError as exc:
+            logger.error("get_attribute_ids_by_poi_ids failed: %s", exc)
+            raise StoreError(f"Truy vấn poi_attributes thất bại: {exc}") from exc
+
+        mapping: dict[str, set[str]] = {}
+        for link in links:
+            mapping.setdefault(link.poiId, set()).add(link.attributeId)
+        return mapping
+
     @staticmethod
     def _build_where_clause(hard_filters: HardFilters) -> dict[str, Any]:
         """Xây dựng Prisma ``where`` từ hard-filter."""

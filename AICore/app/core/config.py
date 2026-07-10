@@ -48,6 +48,10 @@ class BaseConfig:
         # Provider API keys
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
+        # Search
+        self.SEARCH_COLLECTION_NAME: str = os.getenv("SEARCH_COLLECTION_NAME", "poi")
+        self.SEARCH_DEFAULT_TOP_K: int = int(os.getenv("SEARCH_DEFAULT_TOP_K", "10"))
+
 
 class DevelopmentConfig(BaseConfig):
     """Development environment configuration."""

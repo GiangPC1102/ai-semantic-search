@@ -177,7 +177,7 @@ class VectorStore:
             
             # Convert sparse weights to Qdrant format
             sparse_weights_dict = dict(query_embeddings['lexical_weights'][0])
-            qdrant_sparse = self._create_sparse_vector(sparse_weights_dict)
+            qdrant_sparse = self.create_sparse_vector(sparse_weights_dict)
             
             # Get dense vector
             dense_vector = query_embeddings['dense_vecs'][0]

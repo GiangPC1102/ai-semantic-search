@@ -1,0 +1,98 @@
+generator client {
+  provider      = "prisma-client-py"
+  // native = máy local; linux-* = image Docker (arm64/amd64)
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Brand {
+  id          String @id @default(uuid())
+  name        String
+  category    String?
+  subcategory String?
+
+  pois Poi[]
+
+  @@map("brands")
+}
+
+model Poi {
+  id              String  @id @default(uuid())
+  name            String
+  brandId         String? @map("brand_id")
+  city            String?
+  district        String?
+  address         String?
+  longitude       Float?
+  latitude        Float?
+  rating          Float?
+  reviewCount     Int?    @map("review_count")
+  popularityScore Float?  @map("popularity_score")
+  priceLevel      String? @map("price_level")
+  openHours       Json?   @map("open_hours")
+  description     String?
+  vectorId        String? @map("vector_id")
+
+  brand Brand? @relation(fields: [brandId], references: [id])
+
+  poiAttributes PoiAttribute[]
+  poiTags       PoiTag[]
+
+  @@map("poi")
+}
+
+model Attribute {
+  id            String  @id @default(uuid())
+  attributeName String  @map("attribute_name")
+  description   String?
+  vectorId      String? @map("vector_id")
+
+  poiAttributes PoiAttribute[]
+
+  @@map("attributes")
+}
+
+model Signal {
+  id          String  @id @default(uuid())
+  signalName  String  @map("signal_name")
+  description String?
+
+  @@map("signals")
+}
+
+model Tag {
+  id   String @id @default(uuid())
+  name String
+
+  poiTags PoiTag[]
+
+  @@map("tags")
+}
+
+model PoiAttribute {
+  id          String @id @default(uuid())
+  poiId       String @map("poi_id")
+  attributeId String @map("attribute_id")
+
+  poi       Poi       @relation(fields: [poiId], references: [id], onDelete: Cascade)
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([poiId, attributeId])
+  @@map("poi_attributes")
+}
+
+model PoiTag {
+  id    String @id @default(uuid())
+  poiId String @map("poi_id")
+  tagId String @map("tag_id")
+
+  poi Poi @relation(fields: [poiId], references: [id], onDelete: Cascade)
+  tag Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([poiId, tagId])
+  @@map("poi_tags")
+}

@@ -25,19 +25,28 @@ class RankingSignalType(str, Enum):
 
 
 class OpeningHoursPreference(BaseModel):
-    """Ràng buộc giờ mở/đóng cửa mong muốn — dùng khi signal ``opening_hours``."""
+    """Desired opening-hours constraint — used with signal ``opening_hours``."""
 
     open_time: str | None = Field(
         default=None,
-        description="Giờ POI phải đã mở cửa, format HH:MM 24h (vd: '23:00' cho 'mở sau 11h tối')",
+        description=(
+            "Time the POI must already be open / must have opened by, HH:MM 24h. "
+            "Use for 'mở / mở lúc / mở cửa lúc / opens at / opens from / opens after' "
+            "(e.g. '04:00' for 'Cây ATM mở 4h' or 'mở cửa lúc 4h'). "
+            "Do NOT use for 'còn mở / still open at'."
+        ),
     )
     close_time: str | None = Field(
         default=None,
-        description="Giờ POI phải còn mở cửa, format HH:MM 24h (vd: '02:00' cho 'mở đến 2h sáng')",
+        description=(
+            "Time the POI must still be open / remain open until, HH:MM 24h. "
+            "Use for 'còn mở lúc / still open at / open until / open late' "
+            "(e.g. '23:00' for 'còn mở lúc 23:00', '02:00' for 'mở đến 2h sáng')."
+        ),
     )
     is_24h: bool = Field(
         default=False,
-        description="Yêu cầu mở 24/7",
+        description="Requires 24/7 opening",
     )
 
     @field_validator("open_time", "close_time", mode="before")
@@ -62,23 +71,23 @@ class HardFilters(BaseModel):
 
     brand: str | None = Field(
         default=None,
-        description="Tên thương hiệu chuẩn hóa, vd: Highlands Coffee",
+        description="Canonical brand name, e.g. Highlands Coffee",
     )
     category: str | None = Field(
         default=None,
-        description="Loại POI cấp 1, vd: Quán cà phê, Nhà hàng",
+        description="Top-level POI type, e.g. Quán cà phê, Nhà hàng",
     )
     subcategory: str | None = Field(
         default=None,
-        description="Loại POI cấp 2, vd: Coffee Chain, Specialty Coffee",
+        description="Second-level POI type, e.g. Coffee Chain, Specialty Coffee",
     )
     city: str | None = Field(
         default=None,
-        description="Thành phố, vd: TP.HCM, Hà Nội, Đà Nẵng",
+        description="City, e.g. TP.HCM, Hà Nội, Đà Nẵng",
     )
     district: str | None = Field(
         default=None,
-        description="Quận/huyện, vd: Quận 1, Hoàn Kiếm",
+        description="District, e.g. Quận 1, Hoàn Kiếm",
     )
 
 
@@ -86,19 +95,31 @@ class RankingSignalItem(BaseModel):
     """Một tín hiệu ranking được phát hiện từ truy vấn."""
 
     signal: RankingSignalType
-    confidence: float = Field(ge=0.0, le=1.0, description="Độ tin cậy 0-1")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score 0-1")
     opening_hours: OpeningHoursPreference | None = Field(
         default=None,
-        description="Chi tiết giờ mở/đóng — chỉ điền khi signal là opening_hours",
+        description=(
+            "Opening-hours details — ONLY when signal is opening_hours; "
+            "must be null/omitted for all other signals"
+        ),
     )
+
+    @model_validator(mode="after")
+    def drop_opening_hours_unless_signal(self) -> RankingSignalItem:
+        """Strip opening_hours unless signal is opening_hours."""
+        if self.signal != RankingSignalType.OPENING_HOURS and self.opening_hours is not None:
+            return self.model_copy(update={"opening_hours": None})
+        return self
 
 
 class QueryUnderstandOutput(BaseModel):
     """Kết quả cuối cùng của pipeline Query Understanding."""
 
-    original_query: str = Field(description="Truy vấn gốc người dùng nhập")
+    original_query: str = Field(description="Raw user query")
     normalized_query: str = Field(
-        description="Truy vấn đã chuẩn hóa: có dấu, mở rộng viết tắt, thống nhất ngôn ngữ",
+        description=(
+            "Normalized query: diacritics fixed, abbreviations expanded, language unified"
+        ),
     )
     hard_filters: HardFilters = Field(default_factory=HardFilters)
     ranking_signals: list[RankingSignalItem] = Field(default_factory=list)
@@ -148,6 +169,6 @@ class QueryUnderstandRequest(BaseModel):
     query: str = Field(
         ...,
         min_length=1,
-        description="Câu truy vấn tìm kiếm địa điểm",
+        description="Natural-language POI search query",
         examples=["tìm kiếm cho tôi quán cafe Highland ở Quận 1"],
     )

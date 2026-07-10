@@ -40,10 +40,15 @@ services:
       - ./AICore/.env
     environment:
       ENV: dev
+      PRISMA_HOME_DIR: /opt/prisma
+      DATABASE_URL: postgresql://aicore:aicore@postgres:5432/aicore
     volumes:
       - ./AICore/app:/app/app
     depends_on:
-      - qdrant
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     restart: unless-stopped
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 

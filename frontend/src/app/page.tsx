@@ -186,7 +186,7 @@ export default function SearchPage() {
     setData(null)
 
     try {
-      const res = await fetch('/api/search', {
+      const res = await fetch('/api/tasco/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: q, top_k: 10 }),

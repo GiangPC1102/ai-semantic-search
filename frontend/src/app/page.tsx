@@ -2,10 +2,14 @@
 
 import { useState } from 'react'
 
-interface POIResult {
-  poi_id: string | number
-  text: string
-  score: number
+interface TascoSearchItem {
+  poi_id: string | null
+  vector_id: string
+  name: string | null
+  text: string | null
+  score: number | null
+  matched_attribute_count: number
+  payload: Record<string, unknown>
 }
 
 interface RankingSignal {
@@ -21,17 +25,13 @@ interface HardFilters {
   district: string | null
 }
 
-interface QueryAnalysis {
+interface SearchResponse {
   original_query: string
   normalized_query: string
   hard_filters: HardFilters
   ranking_signals: RankingSignal[]
-}
-
-interface SearchResponse {
-  results: POIResult[]
-  query_analysis: QueryAnalysis
-  total: number
+  count: number
+  items: TascoSearchItem[]
 }
 
 const styles = {
@@ -189,7 +189,7 @@ export default function SearchPage() {
       const res = await fetch('/api/tasco/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, top_k: 10 }),
+        body: JSON.stringify({ query: q }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -235,16 +235,16 @@ export default function SearchPage() {
           <div style={styles.analysisBox}>
             <span style={styles.analysisLabel}>Phân tích truy vấn</span>
             <p style={styles.analysisRow}>
-              <strong>Normalized:</strong> {data.query_analysis.normalized_query || data.query_analysis.original_query}
+              <strong>Normalized:</strong> {data.normalized_query || data.original_query}
             </p>
-            {activeFilters(data.query_analysis.hard_filters) !== 'none' && (
+            {activeFilters(data.hard_filters) !== 'none' && (
               <p style={styles.analysisRow}>
-                <strong>Filters:</strong> {activeFilters(data.query_analysis.hard_filters)}
+                <strong>Filters:</strong> {activeFilters(data.hard_filters)}
               </p>
             )}
-            {data.query_analysis.ranking_signals.length > 0 && (
+            {data.ranking_signals.length > 0 && (
               <div style={{ marginTop: 8 }}>
-                {data.query_analysis.ranking_signals.map((s, i) => (
+                {data.ranking_signals.map((s, i) => (
                   <span key={i} style={styles.signal}>
                     {s.signal} {(s.confidence * 100).toFixed(0)}%
                   </span>
@@ -253,18 +253,18 @@ export default function SearchPage() {
             )}
           </div>
 
-          <p style={styles.resultsHeader}>{data.total} kết quả</p>
+          <p style={styles.resultsHeader}>{data.count} kết quả</p>
 
-          {data.results.length === 0 ? (
+          {data.items.length === 0 ? (
             <p style={styles.empty}>
               Không có kết quả. Collection Qdrant có thể chưa có dữ liệu POI.
             </p>
           ) : (
-            data.results.map((r, i) => (
+            data.items.map((r, i) => (
               <div key={i} style={styles.resultCard}>
                 <div style={styles.resultMeta}>
-                  <span style={styles.resultId}>poi_id: {r.poi_id}</span>
-                  <span style={styles.resultScore}>score: {r.score.toFixed(4)}</span>
+                  <span style={styles.resultId}>{r.name || r.poi_id || r.vector_id}</span>
+                  <span style={styles.resultScore}>score: {r.score?.toFixed(4) ?? '-'}</span>
                 </div>
                 <p style={styles.resultText}>{r.text}</p>
               </div>

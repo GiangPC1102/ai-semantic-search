@@ -61,6 +61,10 @@ class BaseConfig:
         # Provider API keys
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
+        # Public URL prefix when behind reverse proxy (e.g. nginx /api → :8000/)
+        # Empty for direct access (localhost:8000); set "/api" in production.
+        self.ROOT_PATH: str = os.getenv("ROOT_PATH", "").rstrip("/")
+
 
 class DevelopmentConfig(BaseConfig):
     """Development environment configuration."""

@@ -18,13 +18,13 @@ class TascoSearchRequest(BaseModel):
     )
     poi_top_k: int | None = Field(
         default=None,
-        ge=1,
+        ge=10,
         le=100,
         description="POI vector search top_k; defaults to TASCO_POI_TOP_K",
     )
     attribute_top_k: int | None = Field(
         default=None,
-        ge=1,
+        ge=5,
         le=100,
         description="Attribute vector search top_k; defaults to TASCO_ATTRIBUTE_TOP_K",
     )

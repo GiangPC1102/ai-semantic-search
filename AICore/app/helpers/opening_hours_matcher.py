@@ -65,9 +65,9 @@ def is_open_at(minute_of_day: int, schedule: ParsedOpenHours) -> bool:
         return True
 
     if close_at > open_at:
-        return open_at <= minute_of_day <= close_at
+        return open_at <= minute_of_day < close_at
 
-    return minute_of_day >= open_at or minute_of_day <= close_at
+    return minute_of_day >= open_at or minute_of_day < close_at
 
 
 def matches_opening_hours_preference(

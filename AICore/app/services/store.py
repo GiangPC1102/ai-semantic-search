@@ -22,6 +22,10 @@ class StoreError(Exception):
     """Lỗi khi truy vấn database qua Prisma."""
 
 
+# Process-level cache — signal names are static data seeded at startup.
+_signal_vi_name_cache: dict[str, str] | None = None
+
+
 class Store:
     """Kết nối PostgreSQL và lọc POI theo hard-filter từ query understanding."""
 
@@ -200,8 +204,12 @@ class Store:
     async def get_signal_vietnam_names(self) -> dict[str, str]:
         """Load ``{signal_name: vietnam_name}`` cho tất cả signal có vietnam_name.
 
-        Dùng để gắn tên hiển thị tiếng Việt vào từng ranking signal trong response.
+        Kết quả được cache ở process level vì signal names là dữ liệu tĩnh.
         """
+        global _signal_vi_name_cache
+        if _signal_vi_name_cache is not None:
+            return _signal_vi_name_cache
+
         await self.connect()
         try:
             signals: list[Signal] = await self._db.signal.find_many(
@@ -211,7 +219,8 @@ class Store:
             logger.error("get_signal_vietnam_names failed: %s", exc)
             raise StoreError(f"Truy vấn signals thất bại: {exc}") from exc
 
-        return {s.signalName: s.vietnamName for s in signals if s.vietnamName}
+        _signal_vi_name_cache = {s.signalName: s.vietnamName for s in signals if s.vietnamName}
+        return _signal_vi_name_cache
 
     @staticmethod
     def _build_where_clause(

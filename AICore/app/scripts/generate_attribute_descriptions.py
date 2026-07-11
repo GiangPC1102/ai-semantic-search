@@ -455,7 +455,7 @@ async def generate_attribute_descriptions(
         ``output_xlsx`` when set).
     """
     db = Prisma()
-    llm = LLM()
+    llm = LLM(max_tokens=4096)
     embedding_client = EmbeddingServiceClient(
         service_url=settings.EMBEDDING_SERVICE_URL,
         timeout=settings.EMBEDDING_SERVICE_TIMEOUT,

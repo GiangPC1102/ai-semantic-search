@@ -2,15 +2,36 @@
 
 import { useState } from 'react'
 
-interface POIResult {
-  poi_id: string | number
-  text: string
-  score: number
+interface TascoSearchItem {
+  poi_id: string | null
+  vector_id: string
+  name: string | null
+  text: string | null
+  score: number | null
+  matched_attribute_count: number
+  matched_attribute_ids: string[]
+  payload: Record<string, unknown>
+  // Extended POI fields — all optional; render only when present
+  rating: number | null
+  brand: string | null
+  category: string | null
+  sub_category: string | null
+  city: string | null
+  district: string | null
+  address: string | null
+  review_count: number | null
+  popularity_score: number | null
+  price_level: number | null
+  opening_hours: string | null
+  attributes: string[] | null
+  tags: string[] | null
+  description: string | null
 }
 
 interface RankingSignal {
   signal: string
   confidence: number
+  signal_name_vi: string | null
 }
 
 interface HardFilters {
@@ -21,153 +42,27 @@ interface HardFilters {
   district: string | null
 }
 
-interface QueryAnalysis {
+interface AttributeHit {
+  id: string
+  attribute_id: string | null
+  name: string | null
+}
+
+interface SearchResponse {
   original_query: string
   normalized_query: string
   hard_filters: HardFilters
   ranking_signals: RankingSignal[]
-}
-
-interface SearchResponse {
-  results: POIResult[]
-  query_analysis: QueryAnalysis
-  total: number
-}
-
-const styles = {
-  main: {
-    maxWidth: 760,
-    margin: '0 auto',
-    padding: '48px 24px 80px',
-  } as React.CSSProperties,
-  heading: {
-    fontSize: 28,
-    fontWeight: 500,
-    margin: '0 0 4px',
-    color: '#0a0a0a',
-  } as React.CSSProperties,
-  subheading: {
-    fontSize: 15,
-    color: '#6b6258',
-    margin: '0 0 36px',
-  } as React.CSSProperties,
-  form: {
-    display: 'flex',
-    gap: 8,
-    marginBottom: 36,
-  } as React.CSSProperties,
-  input: {
-    flex: 1,
-    padding: '11px 14px',
-    fontSize: 15,
-    border: '1px solid #d4d0ca',
-    outline: 'none',
-    background: '#fff',
-    color: '#0a0a0a',
-  } as React.CSSProperties,
-  button: {
-    padding: '11px 22px',
-    background: '#0a0a0a',
-    color: '#faf9f6',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: 15,
-    whiteSpace: 'nowrap',
-  } as React.CSSProperties,
-  buttonDisabled: {
-    opacity: 0.4,
-    cursor: 'not-allowed',
-  } as React.CSSProperties,
-  error: {
-    background: '#fef2f2',
-    border: '1px solid #fca5a5',
-    padding: '14px 16px',
-    marginBottom: 28,
-    color: '#b91c1c',
-    fontSize: 14,
-  } as React.CSSProperties,
-  analysisBox: {
-    borderLeft: '3px solid #b8232c',
-    background: '#f0ebe1',
-    padding: '16px 20px',
-    marginBottom: 32,
-  } as React.CSSProperties,
-  analysisLabel: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    letterSpacing: '0.14em',
-    textTransform: 'uppercase' as const,
-    color: '#6b6258',
-    marginBottom: 10,
-    display: 'block',
-  } as React.CSSProperties,
-  analysisRow: {
-    fontSize: 14,
-    color: '#1a1a1a',
-    margin: '4px 0',
-  } as React.CSSProperties,
-  signal: {
-    display: 'inline-block',
-    fontFamily: 'monospace',
-    fontSize: 11,
-    padding: '2px 7px',
-    border: '1px solid #d4d0ca',
-    marginRight: 6,
-    marginTop: 4,
-    color: '#6b6258',
-  } as React.CSSProperties,
-  resultsHeader: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    letterSpacing: '0.14em',
-    textTransform: 'uppercase' as const,
-    color: '#6b6258',
-    marginBottom: 16,
-  } as React.CSSProperties,
-  resultCard: {
-    border: '1px solid #e8e4dc',
-    padding: '16px 18px',
-    marginBottom: 10,
-    background: '#fff',
-  } as React.CSSProperties,
-  resultMeta: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  } as React.CSSProperties,
-  resultId: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    color: '#a09890',
-  } as React.CSSProperties,
-  resultScore: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    color: '#b8232c',
-  } as React.CSSProperties,
-  resultText: {
-    fontSize: 14,
-    lineHeight: 1.6,
-    color: '#1a1a1a',
-    margin: 0,
-  } as React.CSSProperties,
-  empty: {
-    color: '#6b6258',
-    fontSize: 14,
-    padding: '24px 0',
-  } as React.CSSProperties,
-  loading: {
-    color: '#6b6258',
-    fontSize: 14,
-    padding: '24px 0',
-  } as React.CSSProperties,
+  attribute_hits: AttributeHit[]
+  count: number
+  items: TascoSearchItem[]
 }
 
 function activeFilters(hf: HardFilters): string {
   return Object.entries(hf)
     .filter(([, v]) => v !== null)
     .map(([k, v]) => `${k}: ${v}`)
-    .join(' · ') || 'none'
+    .join(' · ') || ''
 }
 
 export default function SearchPage() {
@@ -186,10 +81,10 @@ export default function SearchPage() {
     setData(null)
 
     try {
-      const res = await fetch('/api/search', {
+      const res = await fetch('/api/tasco/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, top_k: 10 }),
+        body: JSON.stringify({ query: q }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -203,75 +98,178 @@ export default function SearchPage() {
     }
   }
 
+  const filters = data ? activeFilters(data.hard_filters) : ''
+
+  // Build attribute id → display name map from the global attribute hits list.
+  const attrMap: Record<string, string> = {}
+  if (data) {
+    for (const h of data.attribute_hits) {
+      if (h.attribute_id && h.name) attrMap[h.attribute_id] = h.name
+    }
+  }
+
+  // Normalise scores relative to the top result so the bar is always meaningful.
+  const maxScore = data
+    ? Math.max(...data.items.map(r => r.score ?? 0), 0.001)
+    : 1
+
+  // Set of signal names present in this query — used to gate stat display per result.
+  const activeSignals = new Set(data?.ranking_signals.map(s => s.signal) ?? [])
+
   return (
-    <main style={styles.main}>
-      <h1 style={styles.heading}>AI Semantic Search</h1>
-      <p style={styles.subheading}>Tìm kiếm địa điểm bằng ngôn ngữ tự nhiên</p>
+    <main className="page">
+        <p className="eyebrow">TASCO AI · POI Search</p>
+        <h1 className="heading">Tìm kiếm địa điểm<br />bằng ngôn ngữ tự nhiên</h1>
+        <p className="subheading">
+          Nhập mô tả — AI sẽ hiểu ý định, lọc theo tiêu chí và tìm đúng nơi bạn cần.
+        </p>
 
-      <form onSubmit={handleSearch} style={styles.form}>
-        <input
-          type="text"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder="Ví dụ: quán cafe yên tĩnh có wifi ở Quận 1"
-          style={styles.input}
-          disabled={loading}
-        />
-        <button
-          type="submit"
-          disabled={loading || !query.trim()}
-          style={{ ...styles.button, ...(loading || !query.trim() ? styles.buttonDisabled : {}) }}
-        >
-          {loading ? 'Đang tìm…' : 'Tìm kiếm'}
-        </button>
-      </form>
+        <form onSubmit={handleSearch} className="search-form">
+          <input
+            type="text"
+            className="search-input"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Ví dụ: quán cafe yên tĩnh có wifi ở Quận 1"
+            disabled={loading}
+            autoFocus
+          />
+          <button
+            type="submit"
+            className="search-btn"
+            disabled={loading || !query.trim()}
+          >
+            {loading ? 'Đang tìm…' : 'Tìm kiếm'}
+          </button>
+        </form>
 
-      {error && <div style={styles.error}>{error}</div>}
-
-      {loading && <p style={styles.loading}>Đang phân tích truy vấn và tìm kiếm…</p>}
-
-      {data && !loading && (
-        <>
-          <div style={styles.analysisBox}>
-            <span style={styles.analysisLabel}>Phân tích truy vấn</span>
-            <p style={styles.analysisRow}>
-              <strong>Normalized:</strong> {data.query_analysis.normalized_query || data.query_analysis.original_query}
-            </p>
-            {activeFilters(data.query_analysis.hard_filters) !== 'none' && (
-              <p style={styles.analysisRow}>
-                <strong>Filters:</strong> {activeFilters(data.query_analysis.hard_filters)}
-              </p>
-            )}
-            {data.query_analysis.ranking_signals.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                {data.query_analysis.ranking_signals.map((s, i) => (
-                  <span key={i} style={styles.signal}>
-                    {s.signal} {(s.confidence * 100).toFixed(0)}%
-                  </span>
-                ))}
-              </div>
-            )}
+        {error && (
+          <div className="error-box">
+            {error}
           </div>
+        )}
 
-          <p style={styles.resultsHeader}>{data.total} kết quả</p>
+        {loading && (
+          <div className="loading-wrap">
+            <div className="loading-spinner" />
+            Đang phân tích truy vấn và tìm kiếm…
+          </div>
+        )}
 
-          {data.results.length === 0 ? (
-            <p style={styles.empty}>
-              Không có kết quả. Collection Qdrant có thể chưa có dữ liệu POI.
-            </p>
-          ) : (
-            data.results.map((r, i) => (
-              <div key={i} style={styles.resultCard}>
-                <div style={styles.resultMeta}>
-                  <span style={styles.resultId}>poi_id: {r.poi_id}</span>
-                  <span style={styles.resultScore}>score: {r.score.toFixed(4)}</span>
+        {data && !loading && (
+          <>
+            <div className="analysis-card">
+              <span className="analysis-label">Phân tích truy vấn</span>
+              <p className="analysis-row">
+                <strong>Truy vấn:</strong> {data.normalized_query || data.original_query}
+              </p>
+              {filters && (
+                <p className="analysis-row">
+                  <strong>Bộ lọc:</strong> {filters}
+                </p>
+              )}
+              {data.ranking_signals.length > 0 && (
+                <div className="signals-wrap">
+                  {data.ranking_signals.map((s, i) => (
+                    <span key={i} className="signal-chip">
+                      {s.signal_name_vi || s.signal} {(s.confidence * 100).toFixed(0)}%
+                    </span>
+                  ))}
                 </div>
-                <p style={styles.resultText}>{r.text}</p>
+              )}
+            </div>
+
+            <p className="results-header">{data.count} kết quả</p>
+
+            {data.items.length === 0 ? (
+              <div className="empty-state">
+                <p>Không tìm thấy địa điểm phù hợp.</p>
+                <small>Thử thay đổi từ khoá hoặc bỏ bớt tiêu chí lọc.</small>
               </div>
-            ))
-          )}
-        </>
-      )}
+            ) : (
+              data.items.map((r, i) => {
+                const pct = Math.round(((r.score ?? 0) / maxScore) * 100)
+                const reasons = (r.matched_attribute_ids ?? [])
+                  .map(id => attrMap[id])
+                  .filter(Boolean) as string[]
+
+                const cats = [r.brand, r.category, r.sub_category].filter(Boolean) as string[]
+                const locationParts = [r.address, r.district, r.city].filter(Boolean) as string[]
+                const showRating = activeSignals.has('rating') && r.rating != null
+                const showReviewCount = activeSignals.has('review_count') && r.review_count != null
+                const showPopularity = activeSignals.has('popularity_score') && r.popularity_score != null
+                const showPrice = activeSignals.has('price_level') && r.price_level != null
+                const priceStr = showPrice ? '$'.repeat(Math.min(r.price_level!, 4)) : null
+                const bodyText = r.description || r.text
+
+                return (
+                  <div key={i} className="result-card">
+                    {/* Header: rank + name */}
+                    <div className="result-meta">
+                      <div className="result-rank-name">
+                        <span className="rank-badge">#{i + 1}</span>
+                        <div className="result-name-wrap">
+                          <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
+                          {r.poi_id && <span className="result-poi-id">{r.poi_id}</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Category / brand chips */}
+                    {cats.length > 0 && (
+                      <div className="result-cats">
+                        {cats.map(c => <span key={c} className="result-cat-chip">{c}</span>)}
+                      </div>
+                    )}
+
+                    {/* Location */}
+                    {locationParts.length > 0 && (
+                      <p className="result-location">📍 {locationParts.join(', ')}</p>
+                    )}
+
+                    {/* Stats — only rendered when the signal was identified for this query */}
+                    {(showRating || priceStr || showPopularity) && (
+                      <div className="result-stats">
+                        {showRating && (
+                          <span className="stat-item">★ {r.rating!.toFixed(1)}{showReviewCount ? ` (${r.review_count!.toLocaleString()})` : ''}</span>
+                        )}
+                        {priceStr && <span className="stat-item stat-price">{priceStr}</span>}
+                        {showPopularity && (
+                          <span className="stat-item">🔥 {(r.popularity_score! * 100).toFixed(0)}%</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Opening hours */}
+                    {r.opening_hours && (
+                      <p className="result-hours">⏰ {r.opening_hours}</p>
+                    )}
+
+                    {/* Description / text */}
+                    {bodyText && <p className="result-text">{bodyText}</p>}
+
+                    {/* Matched attribute chips (relevance reasons) */}
+                    {reasons.length > 0 && (
+                      <div className="reason-chips">
+                        {reasons.map(name => (
+                          <span key={name} className="reason-chip">✓ {name}</span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Extra attributes & tags */}
+                    {((r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0) && (
+                      <div className="tag-chips">
+                        {(r.attributes ?? []).map(a => <span key={a} className="tag-chip">{a}</span>)}
+                        {(r.tags ?? []).map(t => <span key={t} className="tag-chip tag-chip--tag">{t}</span>)}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
+          </>
+        )}
     </main>
   )
 }

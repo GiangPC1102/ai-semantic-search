@@ -55,7 +55,7 @@ class BaseConfig:
         self.LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
         self.LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
         self.LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
-        self.LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+        self.LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "300"))
         self.LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))
 
         # Provider API keys

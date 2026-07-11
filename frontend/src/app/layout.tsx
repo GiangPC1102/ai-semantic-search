@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import './globals.css'
 
 export const metadata: Metadata = {
   title: 'AI Semantic Search',
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi">
-      <body style={{ margin: 0, fontFamily: 'system-ui, -apple-system, sans-serif', background: '#faf9f6' }}>
+      <body style={{ margin: 0, fontFamily: 'system-ui, -apple-system, sans-serif', background: '#06101f', minHeight: '100vh' }}>
         {children}
       </body>
     </html>

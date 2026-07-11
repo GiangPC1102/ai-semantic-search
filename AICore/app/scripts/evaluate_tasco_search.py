@@ -71,13 +71,11 @@ def call_tasco_search(
     query: str,
     poi_top_k: int | None = None,
     attribute_top_k: int | None = None,
-    is_filter_attribute: bool = True,
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
     """Call ``POST {api_base}/tasco/search`` with exponential-backoff retries."""
     payload: dict[str, Any] = {"query": query}
-    payload["is_filter_attribute"] = is_filter_attribute
     if poi_top_k is not None:
         payload["poi_top_k"] = poi_top_k
     if attribute_top_k is not None:

@@ -42,6 +42,7 @@ class TascoSearchService:
         query: str,
         poi_top_k: int | None = None,
         attribute_top_k: int | None = None,
+        is_filter_attribute: bool = False,
     ) -> TascoSearchResponse:
         """Run the full Tasco search pipeline.
 
@@ -49,9 +50,10 @@ class TascoSearchService:
             1. Query understanding → normalized_query, hard_filters, signals
             2. Hard-filter POIs (+ opening_hours if present) — cache full Poi rows
             3. Collect vectorIds from filtered POIs
-            4. Parallel POI + attribute vector search
+            4. POI hybrid search; attribute search only if ``is_filter_attribute``
             5. Rerank POI hits by price/rating/popularity/review signals (if any)
-            6. Intersect with attributes; attach PoiDetail from step-2 cache
+            6. If ``is_filter_attribute``: intersect attributes; else map POI hits directly
+               Attach PoiDetail from step-2 cache (no extra DB query)
         """
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
@@ -96,8 +98,32 @@ class TascoSearchService:
             )
 
         try:
-            poi_hits, attribute_hits = await asyncio.gather(
-                asyncio.to_thread(
+            if is_filter_attribute:
+                poi_hits, attribute_hits = await asyncio.gather(
+                    asyncio.to_thread(
+                        self._vector_store.search,
+                        settings.QDRANT_POI_COLLECTION,
+                        search_query,
+                        resolved_poi_top_k,
+                        "poi",
+                        None,
+                        None,
+                        vector_ids,
+                    ),
+                    asyncio.to_thread(
+                        self._vector_store.search,
+                        settings.QDRANT_ATTRIBUTE_COLLECTION,
+                        search_query,
+                        resolved_attr_top_k,
+                        "attribute",
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+            else:
+                attribute_hits = []
+                poi_hits = await asyncio.to_thread(
                     self._vector_store.search,
                     settings.QDRANT_POI_COLLECTION,
                     search_query,
@@ -106,18 +132,7 @@ class TascoSearchService:
                     None,
                     None,
                     vector_ids,
-                ),
-                asyncio.to_thread(
-                    self._vector_store.search,
-                    settings.QDRANT_ATTRIBUTE_COLLECTION,
-                    search_query,
-                    resolved_attr_top_k,
-                    "attribute",
-                    None,
-                    None,
-                    None,
-                ),
-            )
+                )
         except VectorStoreError as exc:
             raise TascoSearchError(str(exc)) from exc
 
@@ -126,6 +141,20 @@ class TascoSearchService:
             poi_by_id,
             understood.ranking_signals,
         )
+
+        if not is_filter_attribute:
+            items = self._items_from_poi_hits(poi_hits, poi_by_id)
+            return TascoSearchResponse(
+                original_query=understood.original_query,
+                normalized_query=search_query,
+                hard_filters=understood.hard_filters,
+                ranking_signals=understood.ranking_signals,
+                hard_filtered_poi_count=len(filtered_pois),
+                poi_hits_count=len(poi_hits),
+                attribute_hits=[],
+                count=len(items),
+                items=items,
+            )
 
         matched_attribute_ids = {
             hit["attribute_id"]
@@ -197,6 +226,33 @@ class TascoSearchService:
             for item in understood.ranking_signals
         ]
         return understood.model_copy(update={"ranking_signals": enriched})
+
+    @staticmethod
+    def _items_from_poi_hits(
+        poi_hits: list[dict[str, Any]],
+        poi_by_id: dict[str, Poi],
+    ) -> list[TascoSearchItem]:
+        """Map POI vector hits to response items without attribute intersection."""
+        items: list[TascoSearchItem] = []
+        for hit in poi_hits:
+            poi_id = hit.get("poi_id")
+            if not poi_id:
+                continue
+            poi = poi_by_id.get(poi_id)
+            items.append(
+                TascoSearchItem(
+                    poi_id=poi_id,
+                    vector_id=str(hit.get("id", "")),
+                    name=hit.get("name") or (poi.name if poi else None),
+                    text=hit.get("text"),
+                    score=hit.get("score"),
+                    matched_attribute_count=0,
+                    matched_attribute_ids=[],
+                    payload=dict(hit.get("payload") or {}),
+                    poi=TascoSearchService._poi_to_detail(poi) if poi else None,
+                )
+            )
+        return items
 
     @staticmethod
     def _intersect_poi_with_attributes(

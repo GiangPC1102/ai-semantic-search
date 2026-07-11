@@ -31,6 +31,14 @@ class TascoSearchRequest(BaseModel):
         le=100,
         description="Attribute vector search top_k; defaults to TASCO_ATTRIBUTE_TOP_K",
     )
+    is_filter_attribute: bool = Field(
+        default=False,
+        description=(
+            "When true, run attribute hybrid search and intersect POI hits with "
+            "matched attributes. When false (default), skip attribute search and "
+            "attribute filtering entirely."
+        ),
+    )
 
 
 class PoiDetail(BaseModel):

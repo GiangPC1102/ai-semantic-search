@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import json
 import re
+from typing import Any
 
 from prisma import Prisma
 from prisma.models import Attribute
@@ -28,6 +29,21 @@ from app.utils.llm_partern import LLM, LLMError
 
 DEFAULT_BATCH_SIZE = 25
 SAMPLE_POI_LIMIT = 3
+
+# Vietnamese display names for ranking signals — curated, matches RankingSignalType enum.
+SIGNAL_VIETNAM_NAMES: dict[str, str] = {
+    "mixed_language": "Đa ngôn ngữ",
+    "opening_hours": "Giờ mở cửa",
+    "price": "Giá",
+    "popularity": "Phổ biến",
+    "location": "Vị trí",
+    "category": "Loại hình",
+    "attribute": "Thuộc tính",
+    "attributes": "Nhiều thuộc tính",
+    "semantic": "Ngữ nghĩa",
+    "rating": "Đánh giá",
+    "review": "Nhận xét",
+}
 
 SYSTEM_PROMPT = """\
 Bạn là chuyên gia domain viết mô tả (description) cho các THUỘC TÍNH (attribute) của POI \
@@ -58,7 +74,7 @@ diễn đạt tương đương và câu truy vấn mẫu.
 Trả lời DUY NHẤT một JSON object, không prose, không markdown code fence, đúng schema sau, \
 các phần tử trong "items" theo ĐÚNG thứ tự các attribute được liệt kê trong phần \
 "Attributes cần viết mô tả" của user message:
-{"items": [{"name": "<tên attribute nguyên văn>", "description": "<mô tả tiếng Việt>"}]}
+{"items": [{"name": "<tên attribute nguyên văn>", "description": "<mô tả tiếng Việt>", "englishName": "<nhãn tiếng Anh ngắn, lowercase, hyphenated, dịch ý nghĩa>"}]}
 
 Ví dụ input:
 Toàn bộ attribute trong hệ thống: yên tĩnh, wifi, phù hợp làm việc, phù hợp gia đình, check-in, 24/7
@@ -69,8 +85,8 @@ Attributes cần viết mô tả:
 
 Ví dụ output:
 {"items": [\
-{"name": "yên tĩnh", "description": "yên tĩnh: không gian ít ồn ào, tĩnh lặng, riêng tư, phù hợp tập trung, khác với các attribute về tiện ích như wifi hay không gian chụp ảnh. Người dùng thường gõ: quán yên tĩnh, chỗ vắng người, không gian tĩnh, quiet, tránh ồn ào, ngồi lâu không bị làm phiền. Ví dụ truy vấn: 'quán cà phê yên tĩnh để làm việc', 'chỗ nào yên tĩnh học bài', 'quán vắng ngồi đọc sách'."}, \
-{"name": "phù hợp gia đình", "description": "phù hợp gia đình: địa điểm thân thiện, thoải mái để đi cùng người thân, đặc biệt có trẻ nhỏ hoặc người lớn tuổi, khác với các attribute về không gian riêng tư như lãng mạn hay yên tĩnh làm việc. Người dùng thường gõ: chỗ cho gia đình, đi cùng con nhỏ, family friendly, có khu vui chơi trẻ em, phù hợp trẻ em. Ví dụ truy vấn: 'nhà hàng cho gia đình có trẻ nhỏ', 'quán ăn đi cùng cả nhà', 'chỗ chơi cho bé cuối tuần'."}\
+{"name": "yên tĩnh", "description": "yên tĩnh: không gian ít ồn ào, tĩnh lặng, riêng tư, phù hợp tập trung, khác với các attribute về tiện ích như wifi hay không gian chụp ảnh. Người dùng thường gõ: quán yên tĩnh, chỗ vắng người, không gian tĩnh, quiet, tránh ồn ào, ngồi lâu không bị làm phiền. Ví dụ truy vấn: 'quán cà phê yên tĩnh để làm việc', 'chỗ nào yên tĩnh học bài', 'quán vắng ngồi đọc sách'.", "englishName": "quiet"}, \
+{"name": "phù hợp gia đình", "description": "phù hợp gia đình: địa điểm thân thiện, thoải mái để đi cùng người thân, đặc biệt có trẻ nhỏ hoặc người lớn tuổi, khác với các attribute về không gian riêng tư như lãng mạn hay yên tĩnh làm việc. Người dùng thường gõ: chỗ cho gia đình, đi cùng con nhỏ, family friendly, có khu vui chơi trẻ em, phù hợp trẻ em. Ví dụ truy vấn: 'nhà hàng cho gia đình có trẻ nhỏ', 'quán ăn đi cùng cả nhà', 'chỗ chơi cho bé cuối tuần'.", "englishName": "family-friendly"}\
 ]}
 """
 
@@ -132,8 +148,8 @@ async def _generate_batch(
     llm: LLM,
     batch: list[tuple[Attribute, list[str]]],
     all_names: list[str],
-) -> dict[str, str]:
-    """Call the LLM once for a batch of attributes; returns name -> description."""
+) -> dict[str, dict[str, str]]:
+    """Call the LLM once for a batch; returns name -> {"description", "englishName"}."""
     attribute_lines = "\n".join(
         _format_attribute_line(attr.attributeName, categories) for attr, categories in batch
     )
@@ -153,13 +169,29 @@ async def _generate_batch(
     )
     items = _parse_llm_json(response.content)
 
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, str]] = {}
     for item in items:
         name = str(item.get("name", "")).strip()
-        description = str(item.get("description", "")).strip()
-        if name and description:
-            result[name] = description
+        if not name:
+            continue
+        result[name] = {
+            "description": str(item.get("description", "")).strip(),
+            "englishName": str(item.get("englishName", "")).strip(),
+        }
     return result
+
+
+async def _update_signal_vietnam_names(db: Prisma) -> None:
+    """Upsert ``vietnamName`` cho các ranking signal từ ``SIGNAL_VIETNAM_NAMES``."""
+    for name, vi_name in SIGNAL_VIETNAM_NAMES.items():
+        await db.signal.upsert(
+            where={"signalName": name},
+            data={
+                "create": {"signalName": name, "vietnamName": vi_name},
+                "update": {"vietnamName": vi_name},
+            },
+        )
+    logger.info("Updated vietnamName for %s signals", len(SIGNAL_VIETNAM_NAMES))
 
 
 async def generate_attribute_descriptions(
@@ -183,6 +215,8 @@ async def generate_attribute_descriptions(
 
     await db.connect()
     try:
+        await _update_signal_vietnam_names(db)
+
         attributes = await _fetch_attributes(db, only_null, limit)
         if not attributes:
             logger.warning("No attribute to process — nothing to generate")
@@ -204,7 +238,7 @@ async def generate_attribute_descriptions(
         for start in range(0, len(enriched), batch_size):
             batch = enriched[start : start + batch_size]
             try:
-                descriptions = await _generate_batch(llm, batch, all_names)
+                payloads = await _generate_batch(llm, batch, all_names)
             except (LLMError, ValueError, json.JSONDecodeError) as exc:
                 logger.error(
                     "Batch %s-%s failed (%s) — retrying once",
@@ -213,7 +247,7 @@ async def generate_attribute_descriptions(
                     exc,
                 )
                 try:
-                    descriptions = await _generate_batch(llm, batch, all_names)
+                    payloads = await _generate_batch(llm, batch, all_names)
                 except (LLMError, ValueError, json.JSONDecodeError) as retry_exc:
                     logger.error(
                         "Batch %s-%s failed again, skipping (%s)",
@@ -224,13 +258,23 @@ async def generate_attribute_descriptions(
                     continue
 
             for attr, _samples in batch:
-                description = descriptions.get(attr.attributeName)
-                if not description:
-                    logger.warning("No description returned for %r", attr.attributeName)
+                payload = payloads.get(attr.attributeName)
+                if not payload:
+                    logger.warning("No payload returned for %r", attr.attributeName)
+                    continue
+                update_data: dict[str, Any] = {}
+                description = payload.get("description")
+                english_name = payload.get("englishName")
+                if description:
+                    update_data["description"] = description
+                # Chỉ ghi englishName khi attribute chưa có (không ghi đè curated).
+                if english_name and not attr.englishName:
+                    update_data["englishName"] = english_name
+                if not update_data:
                     continue
                 await db.attribute.update(
                     where={"id": attr.id},
-                    data={"description": description},
+                    data=update_data,
                 )
                 updated_count += 1
 

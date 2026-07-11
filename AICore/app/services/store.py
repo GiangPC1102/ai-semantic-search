@@ -6,7 +6,7 @@ from typing import Any
 
 from prisma import Prisma
 from prisma.errors import PrismaError
-from prisma.models import Poi
+from prisma.models import Attribute, Poi, Signal
 
 from app.core.logger import logger
 from app.helpers.opening_hours_matcher import matches_opening_hours_preference
@@ -169,6 +169,49 @@ class Store:
         for link in links:
             mapping.setdefault(link.poiId, set()).add(link.attributeId)
         return mapping
+
+    async def get_attributes_by_ids(
+        self,
+        attribute_ids: set[str] | list[str],
+    ) -> dict[str, Attribute]:
+        """Load attributes by id — dùng để lấy ``englishName`` cho localize.
+
+        Args:
+            attribute_ids: Tập id attribute cần fetch.
+
+        Returns:
+            ``{attribute_id: Attribute}``; id không tồn tại bị bỏ qua.
+        """
+        ids = [aid for aid in attribute_ids if aid]
+        if not ids:
+            return {}
+
+        await self.connect()
+        try:
+            attributes = await self._db.attribute.find_many(
+                where={"id": {"in": ids}},
+            )
+        except PrismaError as exc:
+            logger.error("get_attributes_by_ids failed: %s", exc)
+            raise StoreError(f"Truy vấn attributes thất bại: {exc}") from exc
+
+        return {attr.id: attr for attr in attributes}
+
+    async def get_signal_vietnam_names(self) -> dict[str, str]:
+        """Load ``{signal_name: vietnam_name}`` cho tất cả signal có vietnam_name.
+
+        Dùng để gắn tên hiển thị tiếng Việt vào từng ranking signal trong response.
+        """
+        await self.connect()
+        try:
+            signals: list[Signal] = await self._db.signal.find_many(
+                where={"vietnamName": {"not": None}},
+            )
+        except PrismaError as exc:
+            logger.error("get_signal_vietnam_names failed: %s", exc)
+            raise StoreError(f"Truy vấn signals thất bại: {exc}") from exc
+
+        return {s.signalName: s.vietnamName for s in signals if s.vietnamName}
 
     @staticmethod
     def _build_where_clause(

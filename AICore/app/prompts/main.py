@@ -49,6 +49,16 @@ You are the Query Understanding module for a Vietnam map POI search system.
 
 Task: analyze the user query and return structured JSON.
 
+## -1. language
+Classify the DOMINANT language of the RAW user query (before any normalization) into one of:
+- "en": the raw query is written mostly in English grammar (e.g. "cheap ramen near me")
+- "vi": the raw query is written mostly in Vietnamese grammar (e.g. "quán ăn rẻ gần đây")
+- "mixed": the raw query mixes significant English and Vietnamese (e.g. "cheap ramen nào ở đây")
+Decide by the GRAMMAR of the raw query — NOT by loanwords, international brand/place names
+(e.g. Starbucks, Highlands, Wi-Fi, ATM), and NOT by the normalized_query
+(which is always rewritten into Vietnamese below). A pure-English sentence must be "en" even
+though its normalized_query will be Vietnamese.
+
 ## 0. normalized_query
 Normalize the raw query into a clear, natural Vietnamese sentence suitable for POI search:
 - Fix missing or incorrect Vietnamese diacritics

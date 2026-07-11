@@ -35,6 +35,7 @@ CREATE TABLE "attributes" (
     "attribute_name" TEXT NOT NULL,
     "description" TEXT,
     "vector_id" TEXT,
+    "english_name" TEXT,
 
     CONSTRAINT "attributes_pkey" PRIMARY KEY ("id")
 );
@@ -44,6 +45,7 @@ CREATE TABLE "signals" (
     "id" TEXT NOT NULL,
     "signal_name" TEXT NOT NULL,
     "description" TEXT,
+    "vietnam_name" TEXT,
 
     CONSTRAINT "signals_pkey" PRIMARY KEY ("id")
 );
@@ -106,4 +108,3 @@ ALTER TABLE "poi_tags" ADD CONSTRAINT "poi_tags_poi_id_fkey" FOREIGN KEY ("poi_i
 
 -- AddForeignKey
 ALTER TABLE "poi_tags" ADD CONSTRAINT "poi_tags_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "tags"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-

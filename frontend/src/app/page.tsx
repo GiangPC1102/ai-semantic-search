@@ -112,6 +112,17 @@ function IconBrain() {
   )
 }
 
+function PriceLevel({ level }: { level: number }) {
+  const clamped = Math.min(Math.max(level, 1), 5)
+  const labels = ['', 'Rẻ', 'Bình dân', 'Trung bình', 'Khá mắc', 'Cao cấp']
+  return (
+    <span className="price-indicator" title={`${labels[clamped]} (${clamped}/5)`}>
+      <span className="price-indicator-filled">{'$'.repeat(clamped)}</span>
+      <span className="price-indicator-empty">{'$'.repeat(5 - clamped)}</span>
+    </span>
+  )
+}
+
 export default function SearchPage() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
@@ -263,12 +274,10 @@ export default function SearchPage() {
               const priceNum = poi?.price_level
                 ? Number.parseInt(poi.price_level, 10)
                 : NaN
-              const priceStr = !Number.isNaN(priceNum)
-                ? '$'.repeat(Math.min(priceNum, 4))
-                : null
+              const validPrice = !Number.isNaN(priceNum) && priceNum >= 1 && priceNum <= 5
 
               const popularityPct = poi?.popularity_score != null
-                ? Math.round(poi.popularity_score * 100)
+                ? Math.round(poi.popularity_score)
                 : null
 
               const bodyText = poi?.description || r.text
@@ -276,70 +285,73 @@ export default function SearchPage() {
               const hasChips =
                 reasons.length > 0 || (r.attributes?.length ?? 0) > 0
 
+              const hasAnalysis = popularityPct != null || hasChips
+
               return (
                 <div key={i} className="result-card">
 
-                  {/* ── Name + rank ── */}
-                  <div className="card-header">
-                    <span className="rank-badge">#{i + 1}</span>
-                    <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
+                  {/* ── Zone 1: Place Info (Google Maps style) ── */}
+                  <div className="card-place-zone">
+                    <div className="card-header">
+                      <span className="rank-badge">#{i + 1}</span>
+                      <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
+                    </div>
+
+                    {poi?.rating != null && (
+                      <div className="card-rating-row">
+                        <span className="rating-score">{poi.rating.toFixed(1)}</span>
+                        <StarRating rating={poi.rating} />
+                        {poi.review_count != null && (
+                          <span className="rating-count">({poi.review_count.toLocaleString()} reviews)</span>
+                        )}
+                        {validPrice && (
+                          <>
+                            <span className="rating-dot">·</span>
+                            <PriceLevel level={priceNum} />
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {catParts.length > 0 && (
+                      <p className="card-category">{catParts.join(' · ')}</p>
+                    )}
+
+                    {locationParts.length > 0 && (
+                      <p className="card-location">
+                        <IconPin />
+                        {locationParts.join(', ')}
+                      </p>
+                    )}
+
+                    {hoursLabel && (
+                      <p className="card-hours">
+                        <IconClock />
+                        {hoursLabel}
+                      </p>
+                    )}
+
+                    {bodyText && <p className="card-description">{bodyText}</p>}
                   </div>
 
-                  {/* ── Rating row (always shown when data present) ── */}
-                  {poi?.rating != null && (
-                    <div className="card-rating-row">
-                      <span className="rating-score">{poi.rating.toFixed(1)}</span>
-                      <StarRating rating={poi.rating} />
-                      {poi.review_count != null && (
-                        <span className="rating-count">({poi.review_count.toLocaleString()} reviews)</span>
-                      )}
-                      {priceStr && (
-                        <>
-                          <span className="rating-dot">·</span>
-                          <span className="price-level">{priceStr}</span>
-                        </>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Category / brand ── */}
-                  {catParts.length > 0 && (
-                    <p className="card-category">{catParts.join(' · ')}</p>
-                  )}
-
-                  {/* ── Address / location ── */}
-                  {locationParts.length > 0 && (
-                    <p className="card-location">
-                      <IconPin />
-                      {locationParts.join(', ')}
-                    </p>
-                  )}
-
-                  {/* ── Opening hours ── */}
-                  {hoursLabel && (
-                    <p className="card-hours">
-                      <IconClock />
-                      {hoursLabel}
-                    </p>
-                  )}
-
-                  {/* ── Popularity bar ── */}
-                  {popularityPct != null && (
-                    <div className="card-popularity">
-                      <div className="popularity-bar-track">
-                        <div className="popularity-bar-fill" style={{ width: `${popularityPct}%` }} />
+                  {/* ── Zone 2: System Analysis (why this result) ── */}
+                  {hasAnalysis && (
+                    <div className="card-analysis-zone">
+                      <div className="analysis-zone-header">
+                        <IconBrain />
+                        <span>Lý do hệ thống chọn</span>
                       </div>
-                      <span className="popularity-label">{popularityPct}% popular</span>
-                    </div>
-                  )}
 
-                  {/* ── Description ── */}
-                  {bodyText && <p className="card-description">{bodyText}</p>}
+                      {popularityPct != null && (
+                        <div className="card-popularity">
+                          <span className="popularity-label-pre">Độ phổ biến</span>
+                          <div className="popularity-bar-track">
+                            <div className="popularity-bar-fill" style={{ width: `${popularityPct}%` }} />
+                          </div>
+                          <span className="popularity-label">{popularityPct}%</span>
+                        </div>
+                      )}
 
-                  {/* ── Matched attributes + all POI attributes ── */}
-                  {hasChips && (
-                    <>
-                      <hr className="card-chips-divider" />
                       {reasons.length > 0 && (
                         <div className="reason-chips">
                           {reasons.map(name => (
@@ -350,6 +362,7 @@ export default function SearchPage() {
                           ))}
                         </div>
                       )}
+
                       {(r.attributes?.length ?? 0) > 0 && (
                         <div className="tag-chips">
                           {r.attributes.map(a => (
@@ -357,7 +370,7 @@ export default function SearchPage() {
                           ))}
                         </div>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               )

@@ -20,15 +20,14 @@ async def tasco_search(body: TascoSearchRequest) -> TascoSearchResponse:
     2. Hard-filter POIs (cache full Poi rows + brand)
     3. Collect vectorIds
     4. POI hybrid search (+ attribute search only if ``is_filter_attribute``)
-    5. Optional attribute intersect; attach ``poi``, ``attributes``, and per-item ``explain``
 
     Example body:
 
     ```json
     {
       "query": "quán cafe yên tĩnh có wifi ở Quận 1",
-      "poi_top_k": 20,
-      "attribute_top_k": 20,
+      "poi_top_k": 10,
+      "attribute_top_k": 5,
       "is_filter_attribute": false
     }
     ```

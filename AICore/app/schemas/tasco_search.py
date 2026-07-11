@@ -6,9 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.signal_ranking import HardFilters, RankingSignalItem
-from app.schemas.vector_search import VectorSearchHit
-
 
 class TascoSearchRequest(BaseModel):
     """Request body for end-to-end Tasco search."""
@@ -64,6 +61,32 @@ class PoiDetail(BaseModel):
     vector_id: str | None = None
 
 
+class SearchExplain(BaseModel):
+    """Per-POI explanation of why this item matched the query."""
+
+    hard_attributes: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Hard-filter fields this POI satisfies. ``subcategory`` is omitted "
+            "when the filter rolled back to category-only."
+        ),
+    )
+    ranking_signals: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Localized ranking-signal labels "
+            "(EN → signal_name, VI/mixed → vietnam_name)"
+        ),
+    )
+    attributes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Localized labels of search-matched attributes that this POI has "
+            "(EN → english_name, VI/mixed → attribute_name)"
+        ),
+    )
+
+
 class TascoSearchItem(BaseModel):
     """One final POI hit after attribute intersection."""
 
@@ -77,6 +100,17 @@ class TascoSearchItem(BaseModel):
         description="Number of attributes overlapping attribute search hits",
     )
     matched_attribute_ids: list[str] = Field(default_factory=list)
+    attributes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Localized attribute names linked to this POI via poi_attributes "
+            "(EN → english_name, VI/mixed → attribute_name)"
+        ),
+    )
+    explain: SearchExplain = Field(
+        default_factory=SearchExplain,
+        description="Per-POI explanation (hard filters / signals / matched attrs)",
+    )
     payload: dict[str, Any] = Field(default_factory=dict)
     poi: PoiDetail | None = Field(
         default=None,
@@ -85,14 +119,11 @@ class TascoSearchItem(BaseModel):
 
 
 class TascoSearchResponse(BaseModel):
-    """Tasco search pipeline response."""
+    """Tasco search pipeline response — lean top-level; detail lives in items."""
 
     original_query: str
     normalized_query: str
-    hard_filters: HardFilters
-    ranking_signals: list[RankingSignalItem]
     hard_filtered_poi_count: int
     poi_hits_count: int
-    attribute_hits: list[VectorSearchHit]
     count: int
     items: list[TascoSearchItem]

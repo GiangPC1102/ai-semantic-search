@@ -1,20 +1,29 @@
-"""Tasco search orchestration — understand → hard-filter → parallel vector search → intersect."""
+"""Tasco search orchestration — understand → hard-filter → vector search → intersect."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from prisma.models import Poi
+from prisma.models import Attribute, Poi
 
 from app.core.config import settings
 from app.core.database import get_store
 from app.core.logger import logger
 from app.helpers.poi_signal_reranker import rerank_poi_hits_by_signals
 from app.helpers.query_understand import QueryUnderstandError, QueryUnderstander
-from app.schemas.signal_ranking import QueryLanguage, QueryUnderstandOutput
-from app.schemas.tasco_search import PoiDetail, TascoSearchItem, TascoSearchResponse
-from app.schemas.vector_search import VectorSearchHit
+from app.schemas.signal_ranking import (
+    HardFilters,
+    QueryLanguage,
+    QueryUnderstandOutput,
+    RankingSignalItem,
+)
+from app.schemas.tasco_search import (
+    PoiDetail,
+    SearchExplain,
+    TascoSearchItem,
+    TascoSearchResponse,
+)
 from app.services.store import Store, StoreError
 from app.services.vector_store import VectorStore, VectorStoreError
 
@@ -44,28 +53,14 @@ class TascoSearchService:
         attribute_top_k: int | None = None,
         is_filter_attribute: bool = False,
     ) -> TascoSearchResponse:
-        """Run the full Tasco search pipeline.
-
-        Flow:
-            1. Query understanding → normalized_query, hard_filters, signals
-            2. Hard-filter POIs (+ opening_hours if present) — cache full Poi rows
-            3. Collect vectorIds from filtered POIs
-            4. POI hybrid search; attribute search only if ``is_filter_attribute``
-            5. Rerank POI hits by price/rating/popularity/review signals (if any)
-            6. If ``is_filter_attribute``: intersect attributes; else map POI hits directly
-               Attach PoiDetail from step-2 cache (no extra DB query)
-        """
+        """Run the full Tasco search pipeline."""
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
 
-        # Start embedding the raw query immediately — runs concurrently with the LLM
-        # call below. Normalization rarely changes semantic content enough to affect
-        # retrieval quality, so the raw-query embedding is reused for vector search.
         pre_embed_task = asyncio.create_task(
             asyncio.to_thread(self._vector_store.embed_query, query)
         )
 
-        # LLM call and signal DB fetch are independent — run in parallel.
         try:
             understood, signal_vi_map = await asyncio.gather(
                 asyncio.to_thread(self._understander.understand, query),
@@ -77,14 +72,12 @@ class TascoSearchService:
         except BaseException:
             pre_embed_task.cancel()
             raise
-        understood = self._enrich_signals_with_vi_names(understood, signal_vi_map)
 
+        understood = self._enrich_signals_with_vi_names(understood, signal_vi_map)
         search_query = understood.normalized_query or query
 
-        # Hard-filter POIs and wait for the pre-started embedding concurrently —
-        # both depend on LLM output but are independent of each other.
         try:
-            filtered_pois, query_emb = await asyncio.gather(
+            hard_filter_result, query_emb = await asyncio.gather(
                 self._store.filter_hard_hint(
                     understood.hard_filters,
                     understood.ranking_signals,
@@ -94,6 +87,8 @@ class TascoSearchService:
         except (StoreError, VectorStoreError) as exc:
             raise TascoSearchError(str(exc)) from exc
 
+        filtered_pois = hard_filter_result.pois
+        subcategory_applied = hard_filter_result.subcategory_applied
         vector_ids = [poi.vectorId for poi in filtered_pois if poi.vectorId]
         poi_by_id = {poi.id: poi for poi in filtered_pois}
 
@@ -103,10 +98,8 @@ class TascoSearchService:
                 len(filtered_pois),
             )
             return self._empty_response(
-                understood.original_query,
+                understood,
                 search_query,
-                understood.hard_filters,
-                understood.ranking_signals,
                 hard_filtered_poi_count=len(filtered_pois),
             )
 
@@ -158,66 +151,71 @@ class TascoSearchService:
             understood.ranking_signals,
         )
 
-        if not is_filter_attribute:
-            items = self._items_from_poi_hits(poi_hits, poi_by_id)
-            return TascoSearchResponse(
-                original_query=understood.original_query,
-                normalized_query=search_query,
-                hard_filters=understood.hard_filters,
-                ranking_signals=understood.ranking_signals,
-                hard_filtered_poi_count=len(filtered_pois),
-                poi_hits_count=len(poi_hits),
-                attribute_hits=[],
-                count=len(items),
-                items=items,
-            )
-
         matched_attribute_ids = {
             hit["attribute_id"]
             for hit in attribute_hits
             if hit.get("attribute_id")
         }
 
-        # Chỉ cần englishName khi display tiếng Anh; vi/mixed dùng luôn name Việt
-        # đã lưu trong Qdrant → bỏ qua DB call cho majority case.
-        attr_map: dict[str, Any] = {}
-        if understood.language == QueryLanguage.EN and matched_attribute_ids:
-            try:
-                attr_map = await self._store.get_attributes_by_ids(
-                    matched_attribute_ids,
-                )
-            except StoreError as exc:
-                raise TascoSearchError(str(exc)) from exc
+        if is_filter_attribute and not matched_attribute_ids:
+            items: list[TascoSearchItem] = []
+        else:
+            items = self._items_from_poi_hits(poi_hits, poi_by_id)
 
-        poi_ids_from_hits = [
-            hit["poi_id"] for hit in poi_hits if hit.get("poi_id")
-        ]
+        poi_ids = [item.poi_id for item in items if item.poi_id]
         try:
-            poi_attr_map = await self._store.get_attribute_ids_by_poi_ids(
-                poi_ids_from_hits,
-            )
+            poi_attr_map = await self._store.get_attribute_ids_by_poi_ids(poi_ids)
         except StoreError as exc:
             raise TascoSearchError(str(exc)) from exc
 
-        items = self._intersect_poi_with_attributes(
-            poi_hits=poi_hits,
-            matched_attribute_ids=matched_attribute_ids,
+        if is_filter_attribute and matched_attribute_ids:
+            filtered_items: list[TascoSearchItem] = []
+            for item in items:
+                if not item.poi_id:
+                    continue
+                overlap = sorted(
+                    poi_attr_map.get(item.poi_id, set()) & matched_attribute_ids
+                )
+                if not overlap:
+                    continue
+                filtered_items.append(
+                    item.model_copy(
+                        update={
+                            "matched_attribute_ids": overlap,
+                            "matched_attribute_count": len(overlap),
+                        }
+                    )
+                )
+            items = filtered_items
+            items.sort(key=lambda i: i.matched_attribute_count, reverse=True)
+
+        attr_ids: set[str] = set(matched_attribute_ids)
+        for poi_id in (item.poi_id for item in items if item.poi_id):
+            attr_ids |= poi_attr_map.get(poi_id, set())
+
+        attr_map: dict[str, Attribute] = {}
+        if attr_ids:
+            try:
+                attr_map = await self._store.get_attributes_by_ids(attr_ids)
+            except StoreError as exc:
+                raise TascoSearchError(str(exc)) from exc
+
+        language = understood.language
+        items = self._enrich_items(
+            items,
             poi_attr_map=poi_attr_map,
-            poi_by_id=poi_by_id,
+            attr_map=attr_map,
+            hard_filters=understood.hard_filters,
+            subcategory_applied=subcategory_applied,
+            ranking_signals=understood.ranking_signals,
+            language=language,
         )
 
         return TascoSearchResponse(
             original_query=understood.original_query,
             normalized_query=search_query,
-            hard_filters=understood.hard_filters,
-            ranking_signals=understood.ranking_signals,
             hard_filtered_poi_count=len(filtered_pois),
             poi_hits_count=len(poi_hits),
-            attribute_hits=self._localize_attribute_hits(
-                attribute_hits,
-                attr_map,
-                understood.language,
-            ),
             count=len(items),
             items=items,
         )
@@ -232,7 +230,7 @@ class TascoSearchService:
         understood: QueryUnderstandOutput,
         signal_vi_map: dict[str, str],
     ) -> QueryUnderstandOutput:
-        """Attach ``signal_name_vi`` to each ranking signal from the DB map."""
+        """Attach ``signal_name_vi`` from DB map."""
         if not signal_vi_map or not understood.ranking_signals:
             return understood
         enriched = [
@@ -248,7 +246,7 @@ class TascoSearchService:
         poi_hits: list[dict[str, Any]],
         poi_by_id: dict[str, Poi],
     ) -> list[TascoSearchItem]:
-        """Map POI vector hits to response items without attribute intersection."""
+        """Map POI vector hits to response items."""
         items: list[TascoSearchItem] = []
         for hit in poi_hits:
             poi_id = hit.get("poi_id")
@@ -262,8 +260,6 @@ class TascoSearchService:
                     name=hit.get("name") or (poi.name if poi else None),
                     text=hit.get("text"),
                     score=hit.get("score"),
-                    matched_attribute_count=0,
-                    matched_attribute_ids=[],
                     payload=dict(hit.get("payload") or {}),
                     poi=TascoSearchService._poi_to_detail(poi) if poi else None,
                 )
@@ -271,55 +267,86 @@ class TascoSearchService:
         return items
 
     @staticmethod
-    def _intersect_poi_with_attributes(
-        poi_hits: list[dict[str, Any]],
-        matched_attribute_ids: set[str],
+    def _enrich_items(
+        items: list[TascoSearchItem],
         poi_attr_map: dict[str, set[str]],
-        poi_by_id: dict[str, Poi],
+        attr_map: dict[str, Attribute],
+        hard_filters: HardFilters,
+        subcategory_applied: bool,
+        ranking_signals: list[RankingSignalItem],
+        language: QueryLanguage,
     ) -> list[TascoSearchItem]:
-        """Keep POI hits that share attributes with attribute search, then rerank.
+        """Fill ``attributes`` + ``explain`` on each item."""
+        signal_labels = [
+            s.signal.value
+            if language == QueryLanguage.EN
+            else (s.signal_name_vi or s.signal.value)
+            for s in ranking_signals
+        ]
 
-        Ranking: more matched attributes first. Within the same count, preserve
-        prior order (signal rerank / vector score) via Python stable sort.
-        """
-        if not matched_attribute_ids:
-            return []
+        result: list[TascoSearchItem] = []
+        for item in items:
+            poi_attr_ids = (
+                sorted(poi_attr_map.get(item.poi_id, set())) if item.poi_id else []
+            )
+            all_labels = [
+                label
+                for attr_id in poi_attr_ids
+                if (label := TascoSearchService._attr_label(
+                    attr_map.get(attr_id), language
+                ))
+            ]
+            matched_labels = [
+                label
+                for attr_id in item.matched_attribute_ids
+                if (label := TascoSearchService._attr_label(
+                    attr_map.get(attr_id), language
+                ))
+            ]
+            hard_attrs: dict[str, str] = {}
+            poi = item.poi
+            if poi is not None:
+                if hard_filters.brand and poi.brand_name:
+                    hard_attrs["brand"] = poi.brand_name
+                if hard_filters.category and poi.category:
+                    hard_attrs["category"] = poi.category
+                if (
+                    subcategory_applied
+                    and hard_filters.subcategory
+                    and poi.subcategory
+                ):
+                    hard_attrs["subcategory"] = poi.subcategory
+                if hard_filters.city and poi.city:
+                    hard_attrs["city"] = poi.city
+                if hard_filters.district and poi.district:
+                    hard_attrs["district"] = poi.district
 
-        items: list[TascoSearchItem] = []
-        for hit in poi_hits:
-            poi_id = hit.get("poi_id")
-            if not poi_id:
-                continue
-
-            poi_attrs = poi_attr_map.get(poi_id, set())
-            overlap = sorted(poi_attrs & matched_attribute_ids)
-            if not overlap:
-                continue
-
-            poi = poi_by_id.get(poi_id)
-            items.append(
-                TascoSearchItem(
-                    poi_id=poi_id,
-                    vector_id=str(hit.get("id", "")),
-                    name=hit.get("name") or (poi.name if poi else None),
-                    text=hit.get("text"),
-                    score=hit.get("score"),
-                    matched_attribute_count=len(overlap),
-                    matched_attribute_ids=overlap,
-                    payload=dict(hit.get("payload") or {}),
-                    poi=TascoSearchService._poi_to_detail(poi) if poi else None,
+            result.append(
+                item.model_copy(
+                    update={
+                        "attributes": all_labels,
+                        "explain": SearchExplain(
+                            hard_attributes=hard_attrs,
+                            ranking_signals=list(signal_labels),
+                            attributes=matched_labels,
+                        ),
+                    }
                 )
             )
+        return result
 
-        items.sort(
-            key=lambda item: item.matched_attribute_count,
-            reverse=True,
-        )
-        return items
+    @staticmethod
+    def _attr_label(attr: Attribute | None, language: QueryLanguage) -> str | None:
+        """EN → english_name; VI/mixed → attribute_name."""
+        if attr is None:
+            return None
+        if language == QueryLanguage.EN:
+            return attr.englishName or attr.attributeName
+        return attr.attributeName
 
     @staticmethod
     def _poi_to_detail(poi: Poi) -> PoiDetail:
-        """Map a Prisma Poi (already loaded at hard-filter) to API detail."""
+        """Map Prisma Poi (+ brand) to API detail."""
         brand = poi.brand
         return PoiDetail(
             id=poi.id,
@@ -343,43 +370,17 @@ class TascoSearchService:
         )
 
     @staticmethod
-    def _localize_attribute_hits(
-        hits: list[dict[str, Any]],
-        attr_map: dict[str, Any],
-        language: QueryLanguage,
-    ) -> list[VectorSearchHit]:
-        """Build attribute hits with ``name`` in the query's language.
-
-        English queries get the attribute's ``englishName`` (fallback to the
-        stored Vietnamese name); Vietnamese / mixed queries keep the Vietnamese
-        name — consistent with the normalized query used for search.
-        """
-        localized: list[VectorSearchHit] = []
-        for hit in hits:
-            if language == QueryLanguage.EN:
-                attr = attr_map.get(hit.get("attribute_id"))
-                if attr and attr.englishName:
-                    hit = {**hit, "name": attr.englishName}
-            localized.append(VectorSearchHit(**hit))
-        return localized
-
-    @staticmethod
     def _empty_response(
-        original_query: str,
-        normalized_query: str,
-        hard_filters: Any,
-        ranking_signals: Any,
+        understood: QueryUnderstandOutput,
+        search_query: str,
         hard_filtered_poi_count: int,
     ) -> TascoSearchResponse:
         """Build an empty pipeline response."""
         return TascoSearchResponse(
-            original_query=original_query,
-            normalized_query=normalized_query,
-            hard_filters=hard_filters,
-            ranking_signals=ranking_signals,
+            original_query=understood.original_query,
+            normalized_query=search_query,
             hard_filtered_poi_count=hard_filtered_poi_count,
             poi_hits_count=0,
-            attribute_hits=[],
             count=0,
             items=[],
         )

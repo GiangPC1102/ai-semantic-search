@@ -220,3 +220,5 @@ __marimo__/
 ai_models/
 logging_files
 data
+.DS_Store
+tests/*

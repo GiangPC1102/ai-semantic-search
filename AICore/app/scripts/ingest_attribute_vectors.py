@@ -73,7 +73,9 @@ async def ingest_attribute_vectors(
             embedding_size=settings.EMBEDDING_SIZE,
         )
 
-        texts = [attr.description.strip() for attr in attributes]
+        texts = [
+            f"{attr.attributeName}. {attr.description.strip()}" for attr in attributes
+        ]
         metadatas = [
             {
                 "attribute_id": attr.id,

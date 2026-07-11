@@ -93,6 +93,7 @@ class QueryUnderstander:
         return QueryUnderstandOutput(
             original_query=original_query,
             normalized_query=normalized_query,
+            language=payload.language,
             hard_filters=payload.hard_filters,
             ranking_signals=payload.ranking_signals,
         )

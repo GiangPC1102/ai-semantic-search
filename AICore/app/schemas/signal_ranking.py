@@ -24,6 +24,14 @@ class RankingSignalType(str, Enum):
     REVIEW = "review"
 
 
+class QueryLanguage(str, Enum):
+    """Dominant language of the raw query — by grammar, not by loanwords/brand names."""
+
+    EN = "en"
+    VI = "vi"
+    MIXED = "mixed"
+
+
 class OpeningHoursPreference(BaseModel):
     """Desired opening-hours constraint — used with signal ``opening_hours``."""
 
@@ -103,6 +111,10 @@ class RankingSignalItem(BaseModel):
             "must be null/omitted for all other signals"
         ),
     )
+    signal_name_vi: str | None = Field(
+        default=None,
+        description="Vietnamese display name of the signal (from signals.vietnam_name)",
+    )
 
     @model_validator(mode="after")
     def drop_opening_hours_unless_signal(self) -> RankingSignalItem:
@@ -121,6 +133,10 @@ class QueryUnderstandOutput(BaseModel):
             "Normalized query: diacritics fixed, abbreviations expanded, language unified"
         ),
     )
+    language: QueryLanguage = Field(
+        default=QueryLanguage.VI,
+        description="Dominant language of the raw query (en/vi/mixed)",
+    )
     hard_filters: HardFilters = Field(default_factory=HardFilters)
     ranking_signals: list[RankingSignalItem] = Field(default_factory=list)
 
@@ -129,6 +145,10 @@ class LLMQueryUnderstandPayload(BaseModel):
     """Payload JSON mà LLM trả về — map sang ``QueryUnderstandOutput`` sau post-process."""
 
     normalized_query: str = ""
+    language: QueryLanguage = Field(
+        default=QueryLanguage.VI,
+        description="Dominant language of the raw query (en/vi/mixed)",
+    )
     hard_filters: HardFilters = Field(default_factory=HardFilters)
     ranking_signals: list[RankingSignalItem] = Field(default_factory=list)
 
@@ -141,10 +161,11 @@ class LLMQueryUnderstandPayload(BaseModel):
 
         data.pop("soft_hints", None)
         data.pop("semantic_query", None)
-        data.pop("language", None)
 
         if data.get("normalized_query") is None:
             data["normalized_query"] = ""
+        if data.get("language") is None:
+            data.pop("language", None)
         if data.get("hard_filters") is None:
             data["hard_filters"] = {}
         if data.get("ranking_signals") is None:

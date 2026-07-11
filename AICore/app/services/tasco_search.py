@@ -56,29 +56,44 @@ class TascoSearchService:
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
 
+        # Start embedding the raw query immediately — runs concurrently with the LLM
+        # call below. Normalization rarely changes semantic content enough to affect
+        # retrieval quality, so the raw-query embedding is reused for vector search.
+        pre_embed_task = asyncio.create_task(
+            asyncio.to_thread(self._vector_store.embed_query, query)
+        )
+
         # LLM call and signal DB fetch are independent — run in parallel.
         try:
             understood, signal_vi_map = await asyncio.gather(
                 asyncio.to_thread(self._understander.understand, query),
                 self._store.get_signal_vietnam_names(),
             )
-        except QueryUnderstandError as exc:
+        except (QueryUnderstandError, StoreError) as exc:
+            pre_embed_task.cancel()
             raise TascoSearchError(str(exc)) from exc
-        except StoreError as exc:
-            raise TascoSearchError(str(exc)) from exc
+        except BaseException:
+            pre_embed_task.cancel()
+            raise
         understood = self._enrich_signals_with_vi_names(understood, signal_vi_map)
 
+        search_query = understood.normalized_query or query
+
+        # Hard-filter POIs and wait for the pre-started embedding concurrently —
+        # both depend on LLM output but are independent of each other.
         try:
-            filtered_pois = await self._store.filter_hard_hint(
-                understood.hard_filters,
-                understood.ranking_signals,
+            filtered_pois, query_emb = await asyncio.gather(
+                self._store.filter_hard_hint(
+                    understood.hard_filters,
+                    understood.ranking_signals,
+                ),
+                pre_embed_task,
             )
-        except StoreError as exc:
+        except (StoreError, VectorStoreError) as exc:
             raise TascoSearchError(str(exc)) from exc
 
         vector_ids = [poi.vectorId for poi in filtered_pois if poi.vectorId]
         poi_by_id = {poi.id: poi for poi in filtered_pois}
-        search_query = understood.normalized_query or query
 
         if not vector_ids:
             logger.info(
@@ -92,15 +107,6 @@ class TascoSearchService:
                 understood.ranking_signals,
                 hard_filtered_poi_count=len(filtered_pois),
             )
-
-        # Embed once — reused for both POI and attribute searches.
-        try:
-            query_emb = await asyncio.to_thread(
-                self._vector_store.embed_query,
-                search_query,
-            )
-        except VectorStoreError as exc:
-            raise TascoSearchError(str(exc)) from exc
 
         try:
             poi_hits, attribute_hits = await asyncio.gather(

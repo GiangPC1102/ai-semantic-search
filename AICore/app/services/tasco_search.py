@@ -13,7 +13,7 @@ from app.core.logger import logger
 from app.helpers.poi_signal_reranker import rerank_poi_hits_by_signals
 from app.helpers.query_understand import QueryUnderstandError, QueryUnderstander
 from app.schemas.signal_ranking import QueryLanguage, QueryUnderstandOutput
-from app.schemas.tasco_search import TascoSearchItem, TascoSearchResponse
+from app.schemas.tasco_search import PoiDetail, TascoSearchItem, TascoSearchResponse
 from app.schemas.vector_search import VectorSearchHit
 from app.services.store import Store, StoreError
 from app.services.vector_store import VectorStore, VectorStoreError
@@ -42,45 +42,60 @@ class TascoSearchService:
         query: str,
         poi_top_k: int | None = None,
         attribute_top_k: int | None = None,
+        is_filter_attribute: bool = False,
     ) -> TascoSearchResponse:
         """Run the full Tasco search pipeline.
 
         Flow:
             1. Query understanding → normalized_query, hard_filters, signals
-            2. Hard-filter POIs (+ opening_hours if present)
+            2. Hard-filter POIs (+ opening_hours if present) — cache full Poi rows
             3. Collect vectorIds from filtered POIs
-            4. Parallel POI + attribute vector search
+            4. POI hybrid search; attribute search only if ``is_filter_attribute``
             5. Rerank POI hits by price/rating/popularity/review signals (if any)
-            6. Keep POI hits that share attributes with attribute hits
+            6. If ``is_filter_attribute``: intersect attributes; else map POI hits directly
+               Attach PoiDetail from step-2 cache (no extra DB query)
         """
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
 
-        try:
-            understood = await asyncio.to_thread(
-                self._understander.understand,
-                query,
-            )
-        except QueryUnderstandError as exc:
-            raise TascoSearchError(str(exc)) from exc
+        # Start embedding the raw query immediately — runs concurrently with the LLM
+        # call below. Normalization rarely changes semantic content enough to affect
+        # retrieval quality, so the raw-query embedding is reused for vector search.
+        pre_embed_task = asyncio.create_task(
+            asyncio.to_thread(self._vector_store.embed_query, query)
+        )
 
+        # LLM call and signal DB fetch are independent — run in parallel.
         try:
-            signal_vi_map = await self._store.get_signal_vietnam_names()
-        except StoreError as exc:
+            understood, signal_vi_map = await asyncio.gather(
+                asyncio.to_thread(self._understander.understand, query),
+                self._store.get_signal_vietnam_names(),
+            )
+        except (QueryUnderstandError, StoreError) as exc:
+            pre_embed_task.cancel()
             raise TascoSearchError(str(exc)) from exc
+        except BaseException:
+            pre_embed_task.cancel()
+            raise
         understood = self._enrich_signals_with_vi_names(understood, signal_vi_map)
 
+        search_query = understood.normalized_query or query
+
+        # Hard-filter POIs and wait for the pre-started embedding concurrently —
+        # both depend on LLM output but are independent of each other.
         try:
-            filtered_pois = await self._store.filter_hard_hint(
-                understood.hard_filters,
-                understood.ranking_signals,
+            filtered_pois, query_emb = await asyncio.gather(
+                self._store.filter_hard_hint(
+                    understood.hard_filters,
+                    understood.ranking_signals,
+                ),
+                pre_embed_task,
             )
-        except StoreError as exc:
+        except (StoreError, VectorStoreError) as exc:
             raise TascoSearchError(str(exc)) from exc
 
         vector_ids = [poi.vectorId for poi in filtered_pois if poi.vectorId]
         poi_by_id = {poi.id: poi for poi in filtered_pois}
-        search_query = understood.normalized_query or query
 
         if not vector_ids:
             logger.info(
@@ -96,8 +111,34 @@ class TascoSearchService:
             )
 
         try:
-            poi_hits, attribute_hits = await asyncio.gather(
-                asyncio.to_thread(
+            if is_filter_attribute:
+                poi_hits, attribute_hits = await asyncio.gather(
+                    asyncio.to_thread(
+                        self._vector_store.search,
+                        settings.QDRANT_POI_COLLECTION,
+                        search_query,
+                        resolved_poi_top_k,
+                        "poi",
+                        None,
+                        None,
+                        vector_ids,
+                        query_emb,
+                    ),
+                    asyncio.to_thread(
+                        self._vector_store.search,
+                        settings.QDRANT_ATTRIBUTE_COLLECTION,
+                        search_query,
+                        resolved_attr_top_k,
+                        "attribute",
+                        None,
+                        None,
+                        None,
+                        query_emb,
+                    ),
+                )
+            else:
+                attribute_hits = []
+                poi_hits = await asyncio.to_thread(
                     self._vector_store.search,
                     settings.QDRANT_POI_COLLECTION,
                     search_query,
@@ -106,18 +147,8 @@ class TascoSearchService:
                     None,
                     None,
                     vector_ids,
-                ),
-                asyncio.to_thread(
-                    self._vector_store.search,
-                    settings.QDRANT_ATTRIBUTE_COLLECTION,
-                    search_query,
-                    resolved_attr_top_k,
-                    "attribute",
-                    None,
-                    None,
-                    None,
-                ),
-            )
+                    query_emb,
+                )
         except VectorStoreError as exc:
             raise TascoSearchError(str(exc)) from exc
 
@@ -126,6 +157,20 @@ class TascoSearchService:
             poi_by_id,
             understood.ranking_signals,
         )
+
+        if not is_filter_attribute:
+            items = self._items_from_poi_hits(poi_hits, poi_by_id)
+            return TascoSearchResponse(
+                original_query=understood.original_query,
+                normalized_query=search_query,
+                hard_filters=understood.hard_filters,
+                ranking_signals=understood.ranking_signals,
+                hard_filtered_poi_count=len(filtered_pois),
+                poi_hits_count=len(poi_hits),
+                attribute_hits=[],
+                count=len(items),
+                items=items,
+            )
 
         matched_attribute_ids = {
             hit["attribute_id"]
@@ -199,6 +244,33 @@ class TascoSearchService:
         return understood.model_copy(update={"ranking_signals": enriched})
 
     @staticmethod
+    def _items_from_poi_hits(
+        poi_hits: list[dict[str, Any]],
+        poi_by_id: dict[str, Poi],
+    ) -> list[TascoSearchItem]:
+        """Map POI vector hits to response items without attribute intersection."""
+        items: list[TascoSearchItem] = []
+        for hit in poi_hits:
+            poi_id = hit.get("poi_id")
+            if not poi_id:
+                continue
+            poi = poi_by_id.get(poi_id)
+            items.append(
+                TascoSearchItem(
+                    poi_id=poi_id,
+                    vector_id=str(hit.get("id", "")),
+                    name=hit.get("name") or (poi.name if poi else None),
+                    text=hit.get("text"),
+                    score=hit.get("score"),
+                    matched_attribute_count=0,
+                    matched_attribute_ids=[],
+                    payload=dict(hit.get("payload") or {}),
+                    poi=TascoSearchService._poi_to_detail(poi) if poi else None,
+                )
+            )
+        return items
+
+    @staticmethod
     def _intersect_poi_with_attributes(
         poi_hits: list[dict[str, Any]],
         matched_attribute_ids: set[str],
@@ -234,6 +306,7 @@ class TascoSearchService:
                     matched_attribute_count=len(overlap),
                     matched_attribute_ids=overlap,
                     payload=dict(hit.get("payload") or {}),
+                    poi=TascoSearchService._poi_to_detail(poi) if poi else None,
                 )
             )
 
@@ -245,6 +318,31 @@ class TascoSearchService:
             reverse=True,
         )
         return items
+
+    @staticmethod
+    def _poi_to_detail(poi: Poi) -> PoiDetail:
+        """Map a Prisma Poi (already loaded at hard-filter) to API detail."""
+        brand = poi.brand
+        return PoiDetail(
+            id=poi.id,
+            name=poi.name,
+            brand_id=poi.brandId,
+            brand_name=brand.name if brand else None,
+            category=brand.category if brand else None,
+            subcategory=brand.subcategory if brand else None,
+            city=poi.city,
+            district=poi.district,
+            address=poi.address,
+            longitude=poi.longitude,
+            latitude=poi.latitude,
+            rating=poi.rating,
+            review_count=poi.reviewCount,
+            popularity_score=poi.popularityScore,
+            price_level=poi.priceLevel,
+            open_hours=poi.openHours,
+            description=poi.description,
+            vector_id=poi.vectorId,
+        )
 
     @staticmethod
     def _localize_attribute_hits(

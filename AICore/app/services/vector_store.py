@@ -285,6 +285,26 @@ class VectorStore:
 
         return upserted_ids
 
+    def embed_query(self, query: str) -> dict[str, Any]:
+        """Embed a single query and return the hybrid embedding dict.
+
+        Callers that need to search multiple collections with the same query
+        should call this once and pass the result as ``query_embedding`` to
+        each ``search()`` call — avoiding redundant BGE-M3 inference.
+        """
+        try:
+            embeddings = self.embedding_client.embed_hybrid_documents(
+                [query],
+                model=settings.EMBEDDING_SERVICE_MODEL,
+            )
+            if not embeddings:
+                raise VectorStoreError("Empty embedding response for query")
+            return embeddings[0]
+        except VectorStoreError:
+            raise
+        except Exception as exc:
+            raise VectorStoreError(f"Query embedding failed: {exc}") from exc
+
     def search(
         self,
         collection_name: str,
@@ -294,6 +314,7 @@ class VectorStore:
         prefetch_limit: int | None = None,
         score_threshold: float | None = None,
         point_ids: list[str] | None = None,
+        query_embedding: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid vector search for POI or attribute collections.
 
@@ -340,14 +361,15 @@ class VectorStore:
             )
 
         try:
-            embeddings = self.embedding_client.embed_hybrid_documents(
-                [query],
-                model=settings.EMBEDDING_SERVICE_MODEL,
-            )
-            if not embeddings:
-                raise VectorStoreError("Empty embedding response for query")
+            if query_embedding is None:
+                embeddings = self.embedding_client.embed_hybrid_documents(
+                    [query],
+                    model=settings.EMBEDDING_SERVICE_MODEL,
+                )
+                if not embeddings:
+                    raise VectorStoreError("Empty embedding response for query")
+                query_embedding = embeddings[0]
 
-            query_embedding = embeddings[0]
             dense_vector = query_embedding["dense_vector"]
             qdrant_sparse = self._create_sparse_vector(
                 query_embedding["sparse_weights"],

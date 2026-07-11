@@ -17,10 +17,10 @@ async def tasco_search(body: TascoSearchRequest) -> TascoSearchResponse:
 
     Flow:
     1. Query understanding → normalized_query + hard_filters + signals
-    2. Hard-filter POIs
+    2. Hard-filter POIs (cache full Poi rows + brand)
     3. Collect vectorIds
-    4. Parallel POI + attribute vector search
-    5. Keep POI hits that have attributes from attribute search
+    4. POI hybrid search (+ attribute search only if ``is_filter_attribute``)
+    5. Optional attribute intersect; attach ``poi`` detail from step-2 cache
 
     Example body:
 
@@ -28,7 +28,8 @@ async def tasco_search(body: TascoSearchRequest) -> TascoSearchResponse:
     {
       "query": "quán cafe yên tĩnh có wifi ở Quận 1",
       "poi_top_k": 20,
-      "attribute_top_k": 20
+      "attribute_top_k": 20,
+      "is_filter_attribute": false
     }
     ```
     """
@@ -38,6 +39,7 @@ async def tasco_search(body: TascoSearchRequest) -> TascoSearchResponse:
             query=body.query,
             poi_top_k=body.poi_top_k,
             attribute_top_k=body.attribute_top_k,
+            is_filter_attribute=body.is_filter_attribute,
         )
     except (TascoSearchError, QueryUnderstandError) as exc:
         message = str(exc)

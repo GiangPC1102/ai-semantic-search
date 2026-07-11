@@ -50,16 +50,6 @@ class QueryUnderstander:
         output = self._build_output(query_input, preprocessed, payload)
         return self._post_process(output)
 
-    async def aunderstand(self, query_input: str) -> QueryUnderstandOutput:
-        """Phiên bản async của ``understand``."""
-        preprocessed = self._preprocess_query(query_input)
-        if not preprocessed:
-            raise QueryUnderstandError("Truy vấn rỗng")
-
-        payload = await self._aextract_with_llm(preprocessed)
-        output = self._build_output(query_input, preprocessed, payload)
-        return self._post_process(output)
-
     @staticmethod
     def _preprocess_query(query: str) -> str:
         """Tiền xử lý nhẹ trước khi gửi LLM: trim và gộp khoảng trắng."""
@@ -70,19 +60,6 @@ class QueryUnderstander:
         messages = self._build_messages(query)
         try:
             response = self._llm.chat(
-                messages,
-                response_format={"type": "json_object"},
-            )
-        except LLMError as exc:
-            raise QueryUnderstandError(f"LLM extraction thất bại: {exc}") from exc
-
-        return self._parse_llm_payload(response.content)
-
-    async def _aextract_with_llm(self, query: str) -> LLMQueryUnderstandPayload:
-        """Gọi LLM async và parse JSON response."""
-        messages = self._build_messages(query)
-        try:
-            response = await self._llm.achat(
                 messages,
                 response_format={"type": "json_object"},
             )
@@ -148,18 +125,18 @@ class QueryUnderstander:
 
     @staticmethod
     def _normalize_hhmm(value: str | None) -> str | None:
-        """Chuẩn hóa thời gian về format HH:MM."""
+        """Chuẩn hóa thời gian về format HH:MM; bỏ giá trị không hợp lệ."""
         if not value:
             return None
 
         cleaned = value.strip()
         match = re.match(r"^(\d{1,2}):(\d{1,2})$", cleaned)
         if not match:
-            return cleaned
+            return None
 
         hour, minute = int(match.group(1)), int(match.group(2))
         if hour > 23 or minute > 59:
-            return cleaned
+            return None
         return f"{hour:02d}:{minute:02d}"
 
     @classmethod
@@ -191,12 +168,16 @@ class QueryUnderstander:
         cls,
         signals: list[RankingSignalItem],
     ) -> list[RankingSignalItem]:
-        """Chuẩn hóa opening_hours trên signal opening_hours."""
+        """Chuẩn hóa opening_hours; chỉ giữ trên signal opening_hours."""
         updated: list[RankingSignalItem] = []
         for item in signals:
-            if item.signal != RankingSignalType.OPENING_HOURS or not item.opening_hours:
-                updated.append(item)
+            if item.signal != RankingSignalType.OPENING_HOURS:
+                if item.opening_hours is None:
+                    updated.append(item)
+                else:
+                    updated.append(item.model_copy(update={"opening_hours": None}))
                 continue
+
             updated.append(
                 item.model_copy(
                     update={

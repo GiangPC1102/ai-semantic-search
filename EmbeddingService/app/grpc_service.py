@@ -109,47 +109,46 @@ class EmbeddingServiceImplementation(embedding_pb2_grpc.EmbeddingServiceServicer
         ]
 
     def EmbedHybrid(self, request, context):
-        """Implement EmbedHybrid RPC method"""
+        """Implement EmbedHybrid RPC for a single query (EmbedQueryRequest.text)."""
         model_id = request.model if request.model else self.default_model_id
 
         try:
             start_time = time.time()
+            query_text = (request.text or "").strip()
+            if not query_text:
+                context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                context.set_details("text is required")
+                return embedding_pb2.EmbedHybridResponse()
 
-            # Call model embedding
             model = self.models[model_id]
             outputs = model.encode(
-                request.texts,
+                [query_text],
                 return_dense=True,
                 return_sparse=True,
-                return_colbert_vecs=True
+                return_colbert_vecs=True,
             )
 
-            # Apply token pooling to ColBERT vectors
-            colbert_vectors = self._pool_colbert_vectors(outputs['colbert_vecs'], settings.COLBERT_POOL_FACTOR)
-            
-            # Create hybrid embeddings
-            hybrid_embeddings = [
-                embedding_pb2.HybridEmbedding(
-                    dense_vector=dense.tolist(),
-                    sparse_weights=dict(sparse),
-                    colbert_vectors=[embedding_pb2.FloatVector(values=v) for v in colbert],
-                )
-                for dense, sparse, colbert in zip(
-                    outputs['dense_vecs'],
-                    outputs['lexical_weights'],
-                    colbert_vectors,
-                )
-            ]
+            colbert_vectors = self._pool_colbert_vectors(
+                outputs["colbert_vecs"],
+                settings.COLBERT_POOL_FACTOR,
+            )
 
+            dense = outputs["dense_vecs"][0]
+            sparse = outputs["lexical_weights"][0]
+            colbert = colbert_vectors[0]
             processing_time = time.time() - start_time
 
-            logger.info(f"Embed hybrid completed in {processing_time:.2f}s for {len(request.texts)} texts")
+            logger.info("Embed hybrid query completed in %.2fs", processing_time)
 
-            # Create and return response
+            # EmbedHybridResponse is flat (not EmbedHybridDocumentsResponse)
             return embedding_pb2.EmbedHybridResponse(
-                embeddings=hybrid_embeddings,
+                dense_vector=dense.tolist(),
+                sparse_weights=dict(sparse),
+                colbert_vectors=[
+                    embedding_pb2.FloatVector(values=v) for v in colbert
+                ],
                 model=model_id,
-                processing_time=processing_time
+                processing_time=processing_time,
             )
 
         except Exception as e:

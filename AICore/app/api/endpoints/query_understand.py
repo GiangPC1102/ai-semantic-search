@@ -8,12 +8,16 @@ from app.schemas.signal_ranking import QueryUnderstandOutput, QueryUnderstandReq
 router = APIRouter()
 
 
-@router.post("/understand", response_model=QueryUnderstandOutput)
-async def understand_query(body: QueryUnderstandRequest) -> QueryUnderstandOutput:
+@router.post(
+    "/understand",
+    response_model=QueryUnderstandOutput,
+    response_model_exclude_none=True,
+)
+def understand_query(body: QueryUnderstandRequest) -> QueryUnderstandOutput:
     """Phân tích truy vấn POI — extract hard-filter và ranking signals."""
     understander = QueryUnderstander()
     try:
-        return await understander.aunderstand(body.query)
+        return understander.understand(body.query)
     except QueryUnderstandError as exc:
         message = str(exc)
         if "rỗng" in message.lower():

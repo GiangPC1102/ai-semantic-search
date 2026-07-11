@@ -15,7 +15,7 @@ dev:
 	@echo "  - aicore-api: http://localhost:8000"
 	@echo "  - qdrant:     http://localhost:6333"
 	@echo "  - postgres:   localhost:5432 (user/db: aicore)"
-	@echo "  - embedding:  grpc://localhost:50051"
+	@echo "  - aicore-embedding:  grpc://localhost:50051"
 
 down:
 	@echo "$(YELLOW)Stopping all services...$(NC)"
@@ -42,21 +42,21 @@ build-aicore-api:
 clean-build-aicore-api: clean-aicore-api build-aicore-api
 
 embedding-down:
-	@echo "$(YELLOW)Stopping embedding services...$(NC)"
-	-docker compose stop embedding
-	-docker compose rm -f embedding
-	-docker rm -f embedding
-	@echo "$(GREEN)embedding services stopped.$(NC)"
+	@echo "$(YELLOW)Stopping aicore-embedding...$(NC)"
+	-docker compose stop aicore-embedding
+	-docker compose rm -f aicore-embedding
+	-docker rm -f aicore-embedding
+	@echo "$(GREEN)aicore-embedding stopped.$(NC)"
 
 clean-embedding: embedding-down
-	@echo "$(YELLOW)Removing embedding image...$(NC)"
-	-docker rmi $$(docker compose images -q embedding 2>/dev/null) 2>/dev/null || true
-	@echo "$(GREEN)embedding cleaned.$(NC)"
+	@echo "$(YELLOW)Removing aicore-embedding image...$(NC)"
+	-docker rmi $$(docker compose images -q aicore-embedding 2>/dev/null) 2>/dev/null || true
+	@echo "$(GREEN)aicore-embedding cleaned.$(NC)"
 
 build-embedding:
-	@echo "$(GREEN)Building and starting embedding...$(NC)"
-	docker compose up -d --build embedding
-	@echo "$(GREEN)embedding is running at grpc://localhost:50051$(NC)"
+	@echo "$(GREEN)Building and starting aicore-embedding...$(NC)"
+	docker compose up -d --build aicore-embedding
+	@echo "$(GREEN)aicore-embedding is running at grpc://localhost:50051$(NC)"
 
 clean-build-embedding: clean-embedding build-embedding
 

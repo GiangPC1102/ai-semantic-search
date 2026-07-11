@@ -67,9 +67,9 @@ async def filter_pois(body: PoiFilterRequest) -> PoiFilterResponse:
     """
     store = get_store()
     try:
-        pois = await store.filter_hard_hint(body.hard_filters, body.ranking_signals)
+        result = await store.filter_hard_hint(body.hard_filters, body.ranking_signals)
     except StoreError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    items = [_to_poi_item(poi) for poi in pois]
+    items = [_to_poi_item(poi) for poi in result.pois]
     return PoiFilterResponse(count=len(items), items=items)

@@ -2,6 +2,29 @@
 
 import { useState } from 'react'
 
+interface PoiDetail {
+  id: string
+  name: string
+  brand_name: string | null
+  category: string | null
+  subcategory: string | null
+  city: string | null
+  district: string | null
+  address: string | null
+  rating: number | null
+  review_count: number | null
+  popularity_score: number | null
+  price_level: string | null
+  open_hours: { is_24h?: boolean; open_time?: string; close_time?: string } | null
+  description: string | null
+}
+
+interface SearchExplain {
+  hard_attributes: Record<string, string>
+  ranking_signals: string[]
+  attributes: string[]
+}
+
 interface TascoSearchItem {
   poi_id: string | null
   vector_id: string
@@ -10,58 +33,35 @@ interface TascoSearchItem {
   score: number | null
   matched_attribute_count: number
   matched_attribute_ids: string[]
+  attributes: string[]
+  explain: SearchExplain
   payload: Record<string, unknown>
-  rating: number | null
-  brand: string | null
-  category: string | null
-  sub_category: string | null
-  city: string | null
-  district: string | null
-  address: string | null
-  review_count: number | null
-  popularity_score: number | null
-  price_level: number | null
-  opening_hours: string | null
-  attributes: string[] | null
-  tags: string[] | null
-  description: string | null
-}
-
-interface RankingSignal {
-  signal: string
-  confidence: number
-  signal_name_vi: string | null
-}
-
-interface HardFilters {
-  brand: string | null
-  category: string | null
-  subcategory: string | null
-  city: string | null
-  district: string | null
-}
-
-interface AttributeHit {
-  id: string
-  attribute_id: string | null
-  name: string | null
+  poi: PoiDetail | null
 }
 
 interface SearchResponse {
   original_query: string
   normalized_query: string
-  hard_filters: HardFilters
-  ranking_signals: RankingSignal[]
-  attribute_hits: AttributeHit[]
+  hard_filtered_poi_count: number
+  poi_hits_count: number
   count: number
   items: TascoSearchItem[]
 }
 
-function activeFilters(hf: HardFilters): string {
-  return Object.entries(hf)
-    .filter(([, v]) => v !== null)
+function activeFilters(hard: Record<string, string> | undefined): string {
+  if (!hard) return ''
+  return Object.entries(hard)
     .map(([k, v]) => `${k}: ${v}`)
     .join(' · ') || ''
+}
+
+function formatOpenHours(
+  hours: PoiDetail['open_hours'],
+): string | null {
+  if (!hours) return null
+  if (hours.is_24h) return 'Open 24 hours'
+  const range = [hours.open_time, hours.close_time].filter(Boolean).join(' – ')
+  return range || null
 }
 
 function StarRating({ rating }: { rating: number }) {
@@ -146,14 +146,9 @@ export default function SearchPage() {
     }
   }
 
-  const filters = data ? activeFilters(data.hard_filters) : ''
-
-  const attrMap: Record<string, string> = {}
-  if (data) {
-    for (const h of data.attribute_hits) {
-      if (h.attribute_id && h.name) attrMap[h.attribute_id] = h.name
-    }
-  }
+  const firstExplain = data?.items[0]?.explain
+  const filters = activeFilters(firstExplain?.hard_attributes)
+  const signalLabels = firstExplain?.ranking_signals ?? []
 
   return (
     <main className="page">
@@ -232,12 +227,10 @@ export default function SearchPage() {
                 <strong>Filters</strong> {filters}
               </p>
             )}
-            {data.ranking_signals.length > 0 && (
+            {signalLabels.length > 0 && (
               <div className="signals-wrap">
-                {data.ranking_signals.map((s, i) => (
-                  <span key={i} className="signal-chip">
-                    {s.signal_name_vi || s.signal} {(s.confidence * 100).toFixed(0)}%
-                  </span>
+                {signalLabels.map((s, i) => (
+                  <span key={i} className="signal-chip">{s}</span>
                 ))}
               </div>
             )}
@@ -252,26 +245,36 @@ export default function SearchPage() {
             </div>
           ) : (
             data.items.map((r, i) => {
-              const reasons = (r.matched_attribute_ids ?? [])
-                .map(id => attrMap[id])
-                .filter(Boolean) as string[]
+              const poi = r.poi
+              const reasons = r.explain?.attributes ?? []
 
-              // Category line: brand · category · sub_category
-              const catParts = [r.brand, r.category, r.sub_category].filter(Boolean) as string[]
+              const catParts = [
+                poi?.brand_name,
+                poi?.category,
+                poi?.subcategory,
+              ].filter(Boolean) as string[]
 
-              // Location line: address, district, city
-              const locationParts = [r.address, r.district, r.city].filter(Boolean) as string[]
+              const locationParts = [
+                poi?.address,
+                poi?.district,
+                poi?.city,
+              ].filter(Boolean) as string[]
 
-              const priceStr = r.price_level != null
-                ? '$'.repeat(Math.min(r.price_level, 4))
+              const priceNum = poi?.price_level
+                ? Number.parseInt(poi.price_level, 10)
+                : NaN
+              const priceStr = !Number.isNaN(priceNum)
+                ? '$'.repeat(Math.min(priceNum, 4))
                 : null
 
-              const popularityPct = r.popularity_score != null
-                ? Math.round(r.popularity_score * 100)
+              const popularityPct = poi?.popularity_score != null
+                ? Math.round(poi.popularity_score * 100)
                 : null
 
-              const bodyText = r.description || r.text
-              const hasChips = reasons.length > 0 || (r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0
+              const bodyText = poi?.description || r.text
+              const hoursLabel = formatOpenHours(poi?.open_hours ?? null)
+              const hasChips =
+                reasons.length > 0 || (r.attributes?.length ?? 0) > 0
 
               return (
                 <div key={i} className="result-card">
@@ -283,12 +286,12 @@ export default function SearchPage() {
                   </div>
 
                   {/* ── Rating row (always shown when data present) ── */}
-                  {r.rating != null && (
+                  {poi?.rating != null && (
                     <div className="card-rating-row">
-                      <span className="rating-score">{r.rating.toFixed(1)}</span>
-                      <StarRating rating={r.rating} />
-                      {r.review_count != null && (
-                        <span className="rating-count">({r.review_count.toLocaleString()} reviews)</span>
+                      <span className="rating-score">{poi.rating.toFixed(1)}</span>
+                      <StarRating rating={poi.rating} />
+                      {poi.review_count != null && (
+                        <span className="rating-count">({poi.review_count.toLocaleString()} reviews)</span>
                       )}
                       {priceStr && (
                         <>
@@ -313,10 +316,10 @@ export default function SearchPage() {
                   )}
 
                   {/* ── Opening hours ── */}
-                  {r.opening_hours && (
+                  {hoursLabel && (
                     <p className="card-hours">
                       <IconClock />
-                      {r.opening_hours}
+                      {hoursLabel}
                     </p>
                   )}
 
@@ -333,7 +336,7 @@ export default function SearchPage() {
                   {/* ── Description ── */}
                   {bodyText && <p className="card-description">{bodyText}</p>}
 
-                  {/* ── Matched attributes + tags ── */}
+                  {/* ── Matched attributes + all POI attributes ── */}
                   {hasChips && (
                     <>
                       <hr className="card-chips-divider" />
@@ -347,10 +350,11 @@ export default function SearchPage() {
                           ))}
                         </div>
                       )}
-                      {((r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0) && (
+                      {(r.attributes?.length ?? 0) > 0 && (
                         <div className="tag-chips">
-                          {(r.attributes ?? []).map(a => <span key={a} className="tag-chip">{a}</span>)}
-                          {(r.tags ?? []).map(t => <span key={t} className="tag-chip tag-chip--tag">{t}</span>)}
+                          {r.attributes.map(a => (
+                            <span key={a} className="tag-chip">{a}</span>
+                          ))}
                         </div>
                       )}
                     </>

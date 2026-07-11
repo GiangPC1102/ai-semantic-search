@@ -24,6 +24,7 @@ DEFAULT_API_BASE = os.getenv("TASCO_API_BASE_URL", "http://localhost:8000")
 DEFAULT_TIMEOUT = float(os.getenv("TASCO_API_TIMEOUT", "60"))
 DEFAULT_MAX_RETRIES = int(os.getenv("TASCO_API_MAX_RETRIES", "3"))
 DEFAULT_METRIC_K = int(os.getenv("TASCO_EVAL_K", "10"))
+DEFAULT_IS_FILTER_ATTRIBUTE = False
 
 SEARCH_PATH = "/tasco/search"
 JOIN_SEP = ";"
@@ -71,11 +72,15 @@ def call_tasco_search(
     query: str,
     poi_top_k: int | None = None,
     attribute_top_k: int | None = None,
+    is_filter_attribute: bool = DEFAULT_IS_FILTER_ATTRIBUTE,
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
     """Call ``POST {api_base}/tasco/search`` with exponential-backoff retries."""
-    payload: dict[str, Any] = {"query": query}
+    payload: dict[str, Any] = {
+        "query": query,
+        "is_filter_attribute": is_filter_attribute,
+    }
     if poi_top_k is not None:
         payload["poi_top_k"] = poi_top_k
     if attribute_top_k is not None:
@@ -114,14 +119,15 @@ def _join_unique(values: Iterable[Any]) -> str:
 def extract_predictions(response: dict[str, Any]) -> dict[str, Any]:
     """Project the API response into the comparison columns."""
     items = response.get("items") or []
+    first_explain = (items[0].get("explain") or {}) if items else {}
     return {
         "predict_top_poi_ids": _join_unique(item.get("poi_id") for item in items),
         "predict_attribute": _join_unique(
-            hit.get("name") for hit in (response.get("attribute_hits") or [])
+            label
+            for item in items
+            for label in ((item.get("explain") or {}).get("attributes") or [])
         ),
-        "predict_signals": _join_unique(
-            signal.get("signal") for signal in (response.get("ranking_signals") or [])
-        ),
+        "predict_signals": _join_unique(first_explain.get("ranking_signals") or []),
     }
 
 
@@ -297,6 +303,7 @@ def evaluate(
     api_base: str,
     poi_top_k: int | None = None,
     attribute_top_k: int | None = None,
+    is_filter_attribute: bool = DEFAULT_IS_FILTER_ATTRIBUTE,
     metric_k: int = DEFAULT_METRIC_K,
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
@@ -336,6 +343,7 @@ def evaluate(
                         query=str(query),
                         poi_top_k=poi_top_k,
                         attribute_top_k=attribute_top_k,
+                        is_filter_attribute=is_filter_attribute,
                         timeout=timeout,
                         max_retries=max_retries,
                     )
@@ -379,10 +387,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help=f"Sheet name to read (default: {DEFAULT_SHEET})")
     parser.add_argument("--api-base", default=DEFAULT_API_BASE,
                         help=f"Tasco API base URL (default: {DEFAULT_API_BASE})")
-    parser.add_argument("--poi-top-k", type=int, default=None,
-                        help="Override POI vector search top_k (default: API default).")
+    parser.add_argument(
+        "--poi-top-k",
+        type=int,
+        default=None,
+        help="Override POI vector search top_k (default: API default).",
+    )
     parser.add_argument("--attribute-top-k", type=int, default=None,
                         help="Override attribute vector search top_k (default: API default).")
+    parser.add_argument(
+        "--is-filter-attribute",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_IS_FILTER_ATTRIBUTE,
+        help=(
+            "Enable attribute search + intersect "
+            f"(default: {DEFAULT_IS_FILTER_ATTRIBUTE}). "
+            "Use --no-is-filter-attribute to disable."
+        ),
+    )
     parser.add_argument(
         "--k",
         type=int,
@@ -421,8 +443,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     logger.info(
-        "Loaded %d queries from '%s' (sheet='%s'), metric_k=%d",
-        len(ground_truth), args.input, args.sheet, args.k,
+        "Loaded %d queries from '%s' (sheet='%s'), metric_k=%d, "
+        "poi_top_k=%s, is_filter_attribute=%s",
+        len(ground_truth),
+        args.input,
+        args.sheet,
+        args.k,
+        args.poi_top_k,
+        args.is_filter_attribute,
     )
 
     results = evaluate(
@@ -430,6 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         api_base=args.api_base,
         poi_top_k=args.poi_top_k,
         attribute_top_k=args.attribute_top_k,
+        is_filter_attribute=args.is_filter_attribute,
         metric_k=args.k,
         timeout=args.timeout,
         max_retries=args.max_retries,

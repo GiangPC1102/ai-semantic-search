@@ -20,7 +20,7 @@ async def tasco_search(body: TascoSearchRequest) -> TascoSearchResponse:
     2. Hard-filter POIs (cache full Poi rows + brand)
     3. Collect vectorIds
     4. POI hybrid search (+ attribute search only if ``is_filter_attribute``)
-    5. Optional attribute intersect; attach ``poi`` detail from step-2 cache
+    5. Optional attribute intersect; attach ``poi``, ``attributes``, and per-item ``explain``
 
     Example body:
 

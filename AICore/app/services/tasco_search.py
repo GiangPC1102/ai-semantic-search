@@ -12,6 +12,7 @@ from app.core.database import get_store
 from app.core.logger import logger
 from app.helpers.poi_signal_reranker import rerank_poi_hits_by_signals
 from app.helpers.query_understand import QueryUnderstandError, QueryUnderstander
+from app.schemas.signal_ranking import QueryLanguage, QueryUnderstandOutput
 from app.schemas.tasco_search import TascoSearchItem, TascoSearchResponse
 from app.schemas.vector_search import VectorSearchHit
 from app.services.store import Store, StoreError
@@ -62,6 +63,12 @@ class TascoSearchService:
             )
         except QueryUnderstandError as exc:
             raise TascoSearchError(str(exc)) from exc
+
+        try:
+            signal_vi_map = await self._store.get_signal_vietnam_names()
+        except StoreError as exc:
+            raise TascoSearchError(str(exc)) from exc
+        understood = self._enrich_signals_with_vi_names(understood, signal_vi_map)
 
         try:
             filtered_pois = await self._store.filter_hard_hint(
@@ -126,6 +133,17 @@ class TascoSearchService:
             if hit.get("attribute_id")
         }
 
+        # Chỉ cần englishName khi display tiếng Anh; vi/mixed dùng luôn name Việt
+        # đã lưu trong Qdrant → bỏ qua DB call cho majority case.
+        attr_map: dict[str, Any] = {}
+        if understood.language == QueryLanguage.EN and matched_attribute_ids:
+            try:
+                attr_map = await self._store.get_attributes_by_ids(
+                    matched_attribute_ids,
+                )
+            except StoreError as exc:
+                raise TascoSearchError(str(exc)) from exc
+
         poi_ids_from_hits = [
             hit["poi_id"] for hit in poi_hits if hit.get("poi_id")
         ]
@@ -150,7 +168,11 @@ class TascoSearchService:
             ranking_signals=understood.ranking_signals,
             hard_filtered_poi_count=len(filtered_pois),
             poi_hits_count=len(poi_hits),
-            attribute_hits=[VectorSearchHit(**hit) for hit in attribute_hits],
+            attribute_hits=self._localize_attribute_hits(
+                attribute_hits,
+                attr_map,
+                understood.language,
+            ),
             count=len(items),
             items=items,
         )
@@ -159,6 +181,22 @@ class TascoSearchService:
         """Close owned embedding client if created by this service."""
         if self._owns_vector_store:
             self._vector_store.embedding_client.close()
+
+    @staticmethod
+    def _enrich_signals_with_vi_names(
+        understood: QueryUnderstandOutput,
+        signal_vi_map: dict[str, str],
+    ) -> QueryUnderstandOutput:
+        """Attach ``signal_name_vi`` to each ranking signal from the DB map."""
+        if not signal_vi_map or not understood.ranking_signals:
+            return understood
+        enriched = [
+            item.model_copy(
+                update={"signal_name_vi": signal_vi_map.get(item.signal.value)}
+            )
+            for item in understood.ranking_signals
+        ]
+        return understood.model_copy(update={"ranking_signals": enriched})
 
     @staticmethod
     def _intersect_poi_with_attributes(
@@ -207,6 +245,27 @@ class TascoSearchService:
             reverse=True,
         )
         return items
+
+    @staticmethod
+    def _localize_attribute_hits(
+        hits: list[dict[str, Any]],
+        attr_map: dict[str, Any],
+        language: QueryLanguage,
+    ) -> list[VectorSearchHit]:
+        """Build attribute hits with ``name`` in the query's language.
+
+        English queries get the attribute's ``englishName`` (fallback to the
+        stored Vietnamese name); Vietnamese / mixed queries keep the Vietnamese
+        name — consistent with the normalized query used for search.
+        """
+        localized: list[VectorSearchHit] = []
+        for hit in hits:
+            if language == QueryLanguage.EN:
+                attr = attr_map.get(hit.get("attribute_id"))
+                if attr and attr.englishName:
+                    hit = {**hit, "name": attr.englishName}
+            localized.append(VectorSearchHit(**hit))
+        return localized
 
     @staticmethod
     def _empty_response(

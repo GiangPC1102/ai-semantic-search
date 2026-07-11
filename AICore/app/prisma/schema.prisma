@@ -50,6 +50,7 @@ model Attribute {
   attributeName String  @unique @map("attribute_name")
   description   String?
   vectorId      String? @map("vector_id")
+  englishName   String? @map("english_name")
 
   poiAttributes PoiAttribute[]
 
@@ -57,9 +58,10 @@ model Attribute {
 }
 
 model Signal {
-  id          String  @id @default(uuid())
-  signalName  String  @unique @map("signal_name")
-  description String?
+  id            String  @id @default(uuid())
+  signalName    String  @unique @map("signal_name")
+  description   String?
+  vietnamName   String? @map("vietnam_name")
 
   @@map("signals")
 }

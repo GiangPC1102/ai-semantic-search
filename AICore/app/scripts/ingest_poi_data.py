@@ -46,6 +46,20 @@ SIGNAL_DESCRIPTIONS: dict[str, str] = {
     "review": "Tín hiệu khai thác từ review, tags hoặc phản hồi người dùng",
 }
 
+# English names for attributes in Attribute_Taxonomy sheet.
+ATTRIBUTE_ENGLISH_NAMES: dict[str, str] = {
+    "yên tĩnh": "quiet",
+    "wifi": "wifi",
+    "phù hợp làm việc": "work-friendly",
+    "phù hợp gia đình": "family-friendly",
+    "lãng mạn": "romantic",
+    "mở khuya": "open late",
+    "gần biển": "near the beach",
+    "bãi đỗ xe": "parking",
+    "check-in": "check-in",
+    "24/7": "24/7",
+}
+
 
 def _normalize_token(value: str) -> str:
     """Unicode NFC + strip + collapse whitespace — dùng cho attribute/tag."""
@@ -110,17 +124,26 @@ async def seed_signals(db: Prisma) -> int:
 
 
 async def seed_attribute_taxonomy(db: Prisma, file: Path, sheet: str) -> int:
-    """Upsert attribute taxonomy gốc từ sheet Attribute_Taxonomy."""
+    """Upsert attribute taxonomy gốc từ sheet Attribute_Taxonomy.
+
+    `englishName` lấy từ `ATTRIBUTE_ENGLISH_NAMES`; attribute chưa có trong mapping
+    được để None (do `generate_attribute_descriptions.py` fill sau).
+    """
     df = pd.read_excel(file, sheet_name=sheet, dtype=str)
     count = 0
     for _, row in df.iterrows():
         name = _normalize_token(row["attribute"])
         description = _clean(row.get("semantic_meaning"))
+        english_name = ATTRIBUTE_ENGLISH_NAMES.get(name)
         await db.attribute.upsert(
             where={"attributeName": name},
             data={
-                "create": {"attributeName": name, "description": description},
-                "update": {"description": description},
+                "create": {
+                    "attributeName": name,
+                    "description": description,
+                    "englishName": english_name,
+                },
+                "update": {"description": description, "englishName": english_name},
             },
         )
         count += 1
@@ -221,9 +244,16 @@ async def ingest_poi_relations(db: Prisma, file: Path, sheet: str) -> tuple[int,
 
         for attr_name in _split_multi(row.get("attributes")):
             if attr_name not in attribute_cache:
+                english_name = ATTRIBUTE_ENGLISH_NAMES.get(attr_name)
                 attribute = await db.attribute.upsert(
                     where={"attributeName": attr_name},
-                    data={"create": {"attributeName": attr_name}, "update": {}},
+                    data={
+                        "create": {
+                            "attributeName": attr_name,
+                            "englishName": english_name,
+                        },
+                        "update": {"englishName": english_name},
+                    },
                 )
                 attribute_cache[attr_name] = attribute.id
             await db.poiattribute.upsert(

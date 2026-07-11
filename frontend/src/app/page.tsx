@@ -70,6 +70,7 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<SearchResponse | null>(null)
+  const [isFilterAttribute, setIsFilterAttribute] = useState(true)
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -84,7 +85,7 @@ export default function SearchPage() {
       const res = await fetch('/api/tasco/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q }),
+        body: JSON.stringify({ query: q, is_filter_attribute: isFilterAttribute }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -142,6 +143,22 @@ export default function SearchPage() {
             {loading ? 'Đang tìm…' : 'Tìm kiếm'}
           </button>
         </form>
+
+        <div className="toggle-row">
+          <label className="toggle-label" htmlFor="filter-attr-toggle">
+            Lọc theo thuộc tính
+          </label>
+          <button
+            id="filter-attr-toggle"
+            type="button"
+            role="switch"
+            aria-checked={isFilterAttribute}
+            className={`toggle-switch${isFilterAttribute ? ' toggle-switch--on' : ''}`}
+            onClick={() => setIsFilterAttribute(v => !v)}
+          >
+            <span className="toggle-thumb" />
+          </button>
+        </div>
 
         {error && (
           <div className="error-box">

@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import sys
 import time
-import warnings
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import httpx
 import pandas as pd
-from sklearn.metrics import recall_score
-from sklearn.preprocessing import MultiLabelBinarizer
 
 logger = logging.getLogger("evaluate_tasco_search")
 
@@ -25,6 +23,7 @@ DEFAULT_SHEET = "Public_Evaluation"
 DEFAULT_API_BASE = os.getenv("TASCO_API_BASE_URL", "http://localhost:8000")
 DEFAULT_TIMEOUT = float(os.getenv("TASCO_API_TIMEOUT", "60"))
 DEFAULT_MAX_RETRIES = int(os.getenv("TASCO_API_MAX_RETRIES", "3"))
+DEFAULT_METRIC_K = int(os.getenv("TASCO_EVAL_K", "10"))
 
 SEARCH_PATH = "/tasco/search"
 JOIN_SEP = ";"
@@ -41,6 +40,9 @@ OUTPUT_COLUMNS: tuple[str, ...] = GROUND_TRUTH_COLUMNS + (
     "predict_attribute",
     "predict_signals",
     "recall",
+    "precision",
+    "ndcg",
+    "average_precision",
     "error",
 )
 
@@ -131,40 +133,162 @@ def parse_id_list(text: Any, sep: str = JOIN_SEP) -> list[str]:
     return [token.strip() for token in str(text).split(sep) if token.strip()]
 
 
-def compute_recall(
-    expected_ids: Sequence[str], predicted_ids: Sequence[str]
+def _format_metric(value: float | None) -> str:
+    """Format a metric value for logging."""
+    return f"{value:.3f}" if value is not None else "n/a"
+
+
+def compute_recall_at_k(
+    expected_ids: Sequence[str],
+    predicted_ids: Sequence[str],
+    k: int,
 ) -> float | None:
-    """Compute recall@k."""
-
+    """Recall@K = |relevant ∩ top-K| / |relevant|."""
     expected = list(expected_ids)
-    if not expected:
+    if not expected or k <= 0:
         return None
-    binariser = MultiLabelBinarizer()
-    y_true = binariser.fit_transform([expected])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        y_pred = binariser.transform([list(predicted_ids)])
-        return float(
-            recall_score(y_true, y_pred, average="micro", zero_division=0)
-        )
+    expected_set = set(expected)
+    hits = sum(1 for poi_id in predicted_ids[:k] if poi_id in expected_set)
+    return hits / len(expected)
 
 
-def log_query_result(query_id: Any, recall: float | None, error: str) -> None:
-    """Emit a single-line per-query recall summary."""
-    recall_str = f"{recall:.3f}" if recall is not None else "n/a"
+def compute_precision_at_k(
+    expected_ids: Sequence[str],
+    predicted_ids: Sequence[str],
+    k: int,
+) -> float | None:
+    """Precision@K = |relevant ∩ top-K| / K."""
+    if k <= 0:
+        return None
+    expected_set = set(expected_ids)
+    hits = sum(1 for poi_id in predicted_ids[:k] if poi_id in expected_set)
+    return hits / k
+
+
+def _graded_relevance(expected_ids: Sequence[str]) -> dict[str, float]:
+    """Map each ground-truth id to graded relevance from its rank order.
+
+    First item gets ``len(expected)``, last item gets ``1``.
+    """
+    expected = list(dict.fromkeys(expected_ids))
+    n_relevant = len(expected)
+    return {
+        poi_id: float(n_relevant - rank)
+        for rank, poi_id in enumerate(expected)
+    }
+
+
+def _dcg_at_k(relevances: Sequence[float], k: int) -> float:
+    """Discounted Cumulative Gain at cutoff K."""
+    score = 0.0
+    for index, relevance in enumerate(relevances[:k]):
+        if relevance <= 0:
+            continue
+        # rank is 1-based → discount by log2(rank + 1)
+        score += relevance / math.log2(index + 2)
+    return score
+
+
+def compute_ndcg_at_k(
+    expected_ids: Sequence[str],
+    predicted_ids: Sequence[str],
+    k: int,
+) -> float | None:
+    """nDCG@K with graded relevance from ground-truth order."""
+    if k <= 0:
+        return None
+    relevance_by_id = _graded_relevance(expected_ids)
+    if not relevance_by_id:
+        return None
+
+    predicted_relevances = [
+        relevance_by_id.get(poi_id, 0.0) for poi_id in predicted_ids[:k]
+    ]
+    ideal_relevances = sorted(relevance_by_id.values(), reverse=True)
+    ideal_dcg = _dcg_at_k(ideal_relevances, k)
+    if ideal_dcg <= 0:
+        return None
+    return _dcg_at_k(predicted_relevances, k) / ideal_dcg
+
+
+def compute_average_precision_at_k(
+    expected_ids: Sequence[str],
+    predicted_ids: Sequence[str],
+    k: int,
+) -> float | None:
+    """Average Precision@K (AP@K).
+
+    ``AP@K = (1 / min(|relevant|, K)) * Σ Precision@i · rel(i)`` for i ≤ K.
+    MAP is the mean of AP across queries (see ``summarize``).
+    """
+    expected = list(dict.fromkeys(expected_ids))
+    if not expected or k <= 0:
+        return None
+
+    expected_set = set(expected)
+    hit_count = 0
+    precision_sum = 0.0
+    for index, poi_id in enumerate(predicted_ids[:k], start=1):
+        if poi_id not in expected_set:
+            continue
+        hit_count += 1
+        precision_sum += hit_count / index
+
+    if hit_count == 0:
+        return 0.0
+
+    denominator = min(len(expected), k)
+    return precision_sum / denominator
+
+
+def compute_metrics(
+    expected_ids: Sequence[str],
+    predicted_ids: Sequence[str],
+    k: int,
+) -> dict[str, float | None]:
+    """Compute recall@K, precision@K, nDCG@K, and AP@K for one query."""
+    return {
+        "recall": compute_recall_at_k(expected_ids, predicted_ids, k),
+        "precision": compute_precision_at_k(expected_ids, predicted_ids, k),
+        "ndcg": compute_ndcg_at_k(expected_ids, predicted_ids, k),
+        "average_precision": compute_average_precision_at_k(
+            expected_ids, predicted_ids, k
+        ),
+    }
+
+
+def log_query_result(
+    query_id: Any,
+    metrics: dict[str, float | None],
+    error: str,
+    k: int,
+) -> None:
+    """Emit a single-line per-query metrics summary."""
+    summary = (
+        f"recall@{k}={_format_metric(metrics.get('recall'))} "
+        f"precision@{k}={_format_metric(metrics.get('precision'))} "
+        f"ndcg@{k}={_format_metric(metrics.get('ndcg'))} "
+        f"ap@{k}={_format_metric(metrics.get('average_precision'))}"
+    )
     if error:
-        logger.info("query_id=%s recall=%s (FAILED: %s)", query_id, recall_str, error)
+        logger.info("query_id=%s %s (FAILED: %s)", query_id, summary, error)
         return
-    logger.info("query_id=%s recall=%s", query_id, recall_str)
+    logger.info("query_id=%s %s", query_id, summary)
 
 
 def summarize(results: pd.DataFrame) -> dict[str, float]:
-    """Aggregate recall across all evaluated queries (``None`` recall excluded)."""
-    valid = results[results["recall"].notna()]
+    """Aggregate ranking metrics across evaluated queries (``None`` excluded)."""
+    def _mean(column: str) -> float:
+        valid = results[results[column].notna()]
+        return float(valid[column].mean()) if len(valid) else 0.0
+
     return {
         "total": len(results),
         "failed": int(results["error"].astype(bool).sum()),
-        "mean_recall": float(valid["recall"].mean()) if len(valid) else 0.0,
+        "mean_recall": _mean("recall"),
+        "mean_precision": _mean("precision"),
+        "mean_ndcg": _mean("ndcg"),
+        "map": _mean("average_precision"),
     }
 
 
@@ -173,10 +297,11 @@ def evaluate(
     api_base: str,
     poi_top_k: int | None = None,
     attribute_top_k: int | None = None,
+    metric_k: int = DEFAULT_METRIC_K,
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> pd.DataFrame:
-    """Run the API for every row, compute recall per query, and log results."""
+    """Run the API for every row, compute ranking metrics, and log results."""
 
     rows: list[dict[str, Any]] = []
     total = len(ground_truth)
@@ -194,6 +319,9 @@ def evaluate(
                     "predict_attribute": "",
                     "predict_signals": "",
                     "recall": None,
+                    "precision": None,
+                    "ndcg": None,
+                    "average_precision": None,
                     "error": "",
                 }
             )
@@ -216,11 +344,13 @@ def evaluate(
                     record["error"] = f"{type(exc).__name__}: {exc}"
                     logger.error("query_id=%s failed: %s", query_id, exc)
 
-            record["recall"] = compute_recall(
+            metrics = compute_metrics(
                 expected_ids=parse_id_list(row.get("expected_top_poi_ids")),
                 predicted_ids=parse_id_list(record["predict_top_poi_ids"]),
+                k=metric_k,
             )
-            log_query_result(query_id, record["recall"], record.get("error", ""))
+            record.update(metrics)
+            log_query_result(query_id, metrics, record.get("error", ""), metric_k)
             rows.append(record)
 
     return pd.DataFrame(rows, columns=list(OUTPUT_COLUMNS))
@@ -253,6 +383,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="Override POI vector search top_k (default: API default).")
     parser.add_argument("--attribute-top-k", type=int, default=None,
                         help="Override attribute vector search top_k (default: API default).")
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=DEFAULT_METRIC_K,
+        help=(
+            "Cutoff K for recall@K, precision@K, nDCG@K, and AP@K "
+            f"(default: {DEFAULT_METRIC_K})."
+        ),
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                         help=f"Per-request timeout in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
@@ -271,6 +410,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    if args.k <= 0:
+        logger.error("--k must be a positive integer, got %s", args.k)
+        return 2
+
     try:
         ground_truth = load_ground_truth(args.input, sheet=args.sheet)
     except (FileNotFoundError, ValueError) as exc:
@@ -278,8 +421,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     logger.info(
-        "Loaded %d queries from '%s' (sheet='%s')",
-        len(ground_truth), args.input, args.sheet,
+        "Loaded %d queries from '%s' (sheet='%s'), metric_k=%d",
+        len(ground_truth), args.input, args.sheet, args.k,
     )
 
     results = evaluate(
@@ -287,14 +430,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         api_base=args.api_base,
         poi_top_k=args.poi_top_k,
         attribute_top_k=args.attribute_top_k,
+        metric_k=args.k,
         timeout=args.timeout,
         max_retries=args.max_retries,
     )
 
     summary = summarize(results)
     logger.info(
-        "Summary: total=%d failed=%d mean_recall=%.3f",
-        summary["total"], summary["failed"], summary["mean_recall"],
+        "Summary: total=%d failed=%d "
+        "mean_recall@%d=%.3f mean_precision@%d=%.3f "
+        "mean_ndcg@%d=%.3f MAP@%d=%.3f",
+        summary["total"],
+        summary["failed"],
+        args.k,
+        summary["mean_recall"],
+        args.k,
+        summary["mean_precision"],
+        args.k,
+        summary["mean_ndcg"],
+        args.k,
+        summary["map"],
     )
 
     save_results(results, args.output)

@@ -13,7 +13,7 @@ from app.core.logger import logger
 from app.helpers.poi_signal_reranker import rerank_poi_hits_by_signals
 from app.helpers.query_understand import QueryUnderstandError, QueryUnderstander
 from app.schemas.signal_ranking import QueryLanguage, QueryUnderstandOutput
-from app.schemas.tasco_search import TascoSearchItem, TascoSearchResponse
+from app.schemas.tasco_search import PoiDetail, TascoSearchItem, TascoSearchResponse
 from app.schemas.vector_search import VectorSearchHit
 from app.services.store import Store, StoreError
 from app.services.vector_store import VectorStore, VectorStoreError
@@ -47,11 +47,11 @@ class TascoSearchService:
 
         Flow:
             1. Query understanding → normalized_query, hard_filters, signals
-            2. Hard-filter POIs (+ opening_hours if present)
+            2. Hard-filter POIs (+ opening_hours if present) — cache full Poi rows
             3. Collect vectorIds from filtered POIs
             4. Parallel POI + attribute vector search
             5. Rerank POI hits by price/rating/popularity/review signals (if any)
-            6. Keep POI hits that share attributes with attribute hits
+            6. Intersect with attributes; attach PoiDetail from step-2 cache
         """
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
@@ -234,6 +234,7 @@ class TascoSearchService:
                     matched_attribute_count=len(overlap),
                     matched_attribute_ids=overlap,
                     payload=dict(hit.get("payload") or {}),
+                    poi=TascoSearchService._poi_to_detail(poi) if poi else None,
                 )
             )
 
@@ -245,6 +246,31 @@ class TascoSearchService:
             reverse=True,
         )
         return items
+
+    @staticmethod
+    def _poi_to_detail(poi: Poi) -> PoiDetail:
+        """Map a Prisma Poi (already loaded at hard-filter) to API detail."""
+        brand = poi.brand
+        return PoiDetail(
+            id=poi.id,
+            name=poi.name,
+            brand_id=poi.brandId,
+            brand_name=brand.name if brand else None,
+            category=brand.category if brand else None,
+            subcategory=brand.subcategory if brand else None,
+            city=poi.city,
+            district=poi.district,
+            address=poi.address,
+            longitude=poi.longitude,
+            latitude=poi.latitude,
+            rating=poi.rating,
+            review_count=poi.reviewCount,
+            popularity_score=poi.popularityScore,
+            price_level=poi.priceLevel,
+            open_hours=poi.openHours,
+            description=poi.description,
+            vector_id=poi.vectorId,
+        )
 
     @staticmethod
     def _localize_attribute_hits(

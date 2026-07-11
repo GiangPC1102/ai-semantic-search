@@ -547,6 +547,16 @@ body {
   height: 10px;
 }
 
+/* POI ID — inline right of name */
+.card-poi-id {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  opacity: 0.55;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
 /* Popularity */
 .card-popularity {
   display: flex;

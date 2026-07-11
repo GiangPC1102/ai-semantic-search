@@ -324,6 +324,7 @@ export default function SearchPage() {
                     <div className="card-header">
                       <RankBadge rank={i + 1} />
                       <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
+                      {r.poi_id && <span className="card-poi-id">{r.poi_id}</span>}
                     </div>
 
                     {(r.attributes?.length ?? 0) > 0 && (

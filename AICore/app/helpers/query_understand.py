@@ -1,26 +1,30 @@
-"""Pipeline Query Understanding — extract hard-filter & ranking signals từ truy vấn POI."""
+"""Pipeline Query Understanding — extract hard-filter & ranking signals from POI query."""
 
 from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.core.logger import logger
-from app.prompts.main import build_query_understand_messages
+from app.prompts.main import build_backbone_messages, build_specialist_messages
 from app.schemas.signal_ranking import (
+    BackbonePayload,
     HardFilters,
-    LLMQueryUnderstandPayload,
     OpeningHoursPreference,
     QueryUnderstandOutput,
     RankingSignalItem,
     RankingSignalType,
+    SPECIALIST_SIGNALS,
+    SpecialistPayload,
 )
 from app.utils.llm_partern import LLM, LLMError
 
-_JSON_SCHEMA_HINT = LLMQueryUnderstandPayload.model_json_schema()
+_BACKBONE_SCHEMA_HINT = BackbonePayload.model_json_schema()
+_SPECIALIST_SCHEMA_HINT = SpecialistPayload.model_json_schema()
 
 
 class QueryUnderstandError(Exception):
@@ -46,8 +50,8 @@ class QueryUnderstander:
         if not preprocessed:
             raise QueryUnderstandError("Truy vấn rỗng")
 
-        payload = self._extract_with_llm(preprocessed)
-        output = self._build_output(query_input, preprocessed, payload)
+        backbone, specialist = self._extract_both(preprocessed)
+        output = self._merge(query_input, preprocessed, backbone, specialist)
         return self._post_process(output)
 
     @staticmethod
@@ -55,9 +59,42 @@ class QueryUnderstander:
         """Tiền xử lý nhẹ trước khi gửi LLM: trim và gộp khoảng trắng."""
         return re.sub(r"\s+", " ", query.strip())
 
-    def _extract_with_llm(self, query: str) -> LLMQueryUnderstandPayload:
-        """Gọi LLM và parse JSON response."""
-        messages = self._build_messages(query)
+    def _extract_both(
+        self,
+        query: str,
+    ) -> tuple[BackbonePayload, SpecialistPayload]:
+        """Chạy song song 2 LLM call (backbone + specialist).
+
+        Backbone là bắt buộc — nếu fail thì raise. Specialist là tùy chọn — nếu fail
+        thì log + trả SpecialistPayload rỗng (degrade gracefully, vẫn có backbone).
+        """
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_backbone = executor.submit(self._extract_backbone, query)
+            future_specialist = executor.submit(self._extract_specialist, query)
+
+            backbone = future_backbone.result()  # fatal nếu backbone fail
+            try:
+                specialist = future_specialist.result()
+            except QueryUnderstandError as exc:
+                logger.warning(
+                    "Specialist extraction failed; proceeding without specialist: %s",
+                    exc,
+                )
+                specialist = SpecialistPayload()
+        return backbone, specialist
+
+    def _extract_backbone(self, query: str) -> BackbonePayload:
+        """Gọi LLM backbone và parse JSON response."""
+        messages = build_backbone_messages(query, _BACKBONE_SCHEMA_HINT)
+        return self._parse_payload(self._call_llm(messages), BackbonePayload, "backbone")
+
+    def _extract_specialist(self, query: str) -> SpecialistPayload:
+        """Gọi LLM specialist (0-or-1) và parse JSON response."""
+        messages = build_specialist_messages(query, _SPECIALIST_SCHEMA_HINT)
+        return self._parse_payload(self._call_llm(messages), SpecialistPayload, "specialist")
+
+    def _call_llm(self, messages: list[dict[str, str]]) -> str:
+        """Gọi LLM với json_object response format, trả raw content."""
         try:
             response = self._llm.chat(
                 messages,
@@ -65,37 +102,58 @@ class QueryUnderstander:
             )
         except LLMError as exc:
             raise QueryUnderstandError(f"LLM extraction thất bại: {exc}") from exc
-
-        return self._parse_llm_payload(response.content)
-
-    def _build_messages(self, query: str) -> list[dict[str, str]]:
-        """Xây dựng prompt cho LLM."""
-        return build_query_understand_messages(query, _JSON_SCHEMA_HINT)
+        return response.content
 
     @staticmethod
-    def _parse_llm_payload(content: str) -> LLMQueryUnderstandPayload:
-        """Parse và validate JSON từ LLM."""
+    def _parse_payload(
+        content: str,
+        model: type[BaseModel],
+        label: str,
+    ) -> BaseModel:
+        """Parse và validate JSON từ LLM thành model đã cho."""
         try:
             raw: dict[str, Any] = json.loads(content)
-            return LLMQueryUnderstandPayload.model_validate(raw)
+            return model.model_validate(raw)
         except (json.JSONDecodeError, ValidationError) as exc:
-            logger.error("Parse LLM query understand payload failed: %s | content=%s", exc, content)
-            raise QueryUnderstandError(f"Không parse được JSON từ LLM: {exc}") from exc
+            logger.error(
+                "Parse LLM %s payload failed: %s | content=%s",
+                label,
+                exc,
+                content,
+            )
+            raise QueryUnderstandError(
+                f"Không parse được JSON từ LLM ({label}): {exc}"
+            ) from exc
 
     @staticmethod
-    def _build_output(
+    def _merge(
         original_query: str,
         preprocessed_query: str,
-        payload: LLMQueryUnderstandPayload,
+        backbone: BackbonePayload,
+        specialist: SpecialistPayload,
     ) -> QueryUnderstandOutput:
-        """Map LLM payload sang output schema đầy đủ."""
-        normalized_query = payload.normalized_query.strip() or preprocessed_query
+        """Merge backbone + specialist thành output schema đầy đủ."""
+
+        signals = [
+            item
+            for item in backbone.ranking_signals
+            if item.signal not in SPECIALIST_SIGNALS
+        ]
+        if specialist.signal is not None:
+            signals.append(
+                RankingSignalItem(
+                    signal=specialist.signal,
+                    confidence=specialist.confidence,
+                )
+            )
+
+        normalized_query = backbone.normalized_query.strip() or preprocessed_query
         return QueryUnderstandOutput(
             original_query=original_query,
             normalized_query=normalized_query,
-            language=payload.language,
-            hard_filters=payload.hard_filters,
-            ranking_signals=payload.ranking_signals,
+            language=backbone.language,
+            hard_filters=backbone.hard_filters,
+            ranking_signals=signals,
         )
 
     def _post_process(self, output: QueryUnderstandOutput) -> QueryUnderstandOutput:

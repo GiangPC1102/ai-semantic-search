@@ -279,7 +279,8 @@ class TascoSearchService:
     ) -> list[TascoSearchItem]:
         """Keep POI hits that share attributes with attribute search, then rerank.
 
-        Ranking: more matched attributes first, then higher POI vector score.
+        Ranking: more matched attributes first. Within the same count, preserve
+        prior order (signal rerank / vector score) via Python stable sort.
         """
         if not matched_attribute_ids:
             return []
@@ -311,10 +312,7 @@ class TascoSearchService:
             )
 
         items.sort(
-            key=lambda item: (
-                item.matched_attribute_count,
-                item.score if item.score is not None else float("-inf"),
-            ),
+            key=lambda item: item.matched_attribute_count,
             reverse=True,
         )
         return items

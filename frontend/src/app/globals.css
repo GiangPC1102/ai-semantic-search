@@ -238,6 +238,67 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Ar
   font-size: 14px;
   line-height: 1.65;
   color: #5a7a9e;
+  margin-top: 10px;
+}
+.result-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.result-cat-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #1a3560;
+  border-radius: 3px;
+  color: #8aabcc;
+  background: #0a1a30;
+  white-space: nowrap;
+}
+.result-location {
+  font-size: 13px;
+  color: #5a7a9e;
+  margin-top: 8px;
+  line-height: 1.4;
+}
+.result-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.stat-item {
+  font-size: 13px;
+  color: #8aabcc;
+}
+.stat-price {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #00c2e0;
+  font-weight: 600;
+}
+.result-hours {
+  font-size: 13px;
+  color: #5a7a9e;
+  margin-top: 8px;
+}
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+.tag-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #1a3560;
+  border-radius: 20px;
+  color: #5a7a9e;
+  background: transparent;
+  white-space: nowrap;
+}
+.tag-chip--tag {
+  border-style: dashed;
 }
 .reason-chips {
   display: flex;

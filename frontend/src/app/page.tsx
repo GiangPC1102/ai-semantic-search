@@ -180,7 +180,10 @@ export default function SearchPage() {
                     <div className="result-meta">
                       <div className="result-rank-name">
                         <span className="rank-badge">#{i + 1}</span>
-                        <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
+                        <div className="result-name-wrap">
+                          <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
+                          {r.poi_id && <span className="result-poi-id">{r.poi_id}</span>}
+                        </div>
                       </div>
                       <div className="result-score-wrap">
                         <div className="relevance-bar">

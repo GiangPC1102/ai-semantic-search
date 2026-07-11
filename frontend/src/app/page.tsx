@@ -112,6 +112,29 @@ function IconBrain() {
   )
 }
 
+function IconMedal() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 11 11" fill="currentColor" style={{ flexShrink: 0 }}>
+      <circle cx="5.5" cy="6.5" r="3.5"/>
+      <path d="M3.5 3.5L2 1h7L7.5 3.5" fill="currentColor" opacity="0.6"/>
+    </svg>
+  )
+}
+
+function RankBadge({ rank }: { rank: number }) {
+  const cls =
+    rank === 1 ? 'rank-badge rank-badge--gold'
+    : rank === 2 ? 'rank-badge rank-badge--silver'
+    : rank === 3 ? 'rank-badge rank-badge--bronze'
+    : 'rank-badge'
+  return (
+    <span className={cls}>
+      {rank <= 3 && <IconMedal />}
+      #{rank}
+    </span>
+  )
+}
+
 function PriceLevel({ level }: { level: number }) {
   const clamped = Math.min(Math.max(level, 1), 5)
   const labels = ['', 'Rẻ', 'Bình dân', 'Trung bình', 'Khá mắc', 'Cao cấp']
@@ -299,7 +322,7 @@ export default function SearchPage() {
                   {/* ── Left (70%): Place Info ── */}
                   <div className="card-place-zone">
                     <div className="card-header">
-                      <span className="rank-badge">#{i + 1}</span>
+                      <RankBadge rank={i + 1} />
                       <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
                     </div>
 

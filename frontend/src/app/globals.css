@@ -357,16 +357,37 @@ body {
 }
 
 .rank-badge {
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text-muted);
   background: rgba(255,255,255,0.06);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 2px 8px;
+  border-radius: 6px;
+  padding: 4px 11px;
   flex-shrink: 0;
   letter-spacing: 0.03em;
-  line-height: 1.6;
+  line-height: 1.5;
+}
+
+.rank-badge--gold {
+  color: #F59E0B;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.rank-badge--silver {
+  color: #94A3B8;
+  background: rgba(148, 163, 184, 0.1);
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+.rank-badge--bronze {
+  color: #C2794A;
+  background: rgba(194, 121, 74, 0.1);
+  border-color: rgba(194, 121, 74, 0.35);
 }
 
 .card-name {
@@ -646,8 +667,8 @@ body {
 }
 
 .tag-chip {
-  font-size: 13px;
-  padding: 4px 11px;
+  font-size: 11px;
+  padding: 2px 9px;
   border: 1px solid var(--border);
   border-radius: 20px;
   color: var(--text-muted);

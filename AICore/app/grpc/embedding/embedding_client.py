@@ -144,6 +144,79 @@ class EmbeddingServiceClient:
             logger.error(f"Error creating hybrid embeddings for documents batch. gRPC EmbedHybridDocuments request failed. Details: {str(e)}")
             raise
 
+    def embed_hybrid_documents(self, texts: List[str], model: str = "bge-m3") -> List[Dict[str, Any]]:
+        """Create hybrid embeddings for batch of documents.
+        
+        Args:
+            texts: List of documents to create embeddings.
+            model: ID of the model to use.
+            
+        Returns:
+            List[Dict]: List of hybrid embeddings.
+        """
+        
+        if not self._stub:
+            self._setup_connection()
+            if not self._stub:
+                raise ConnectionError("Unable to connect to embedding service")
+
+        try:
+            request = embedding_pb2.EmbedDocumentsRequest(texts=texts, model=model)
+            start_time = time.time()
+            response = self._stub.EmbedHybridDocuments(request, timeout=self.timeout)
+            process_time = time.time() - start_time
+
+            logger.debug(
+                f"Created hybrid embeddings for {len(texts)} documents in {process_time:.3f}s"
+            )
+
+            return [
+                {
+                    "dense_vector": list(emb.dense_vector),
+                    "sparse_weights": dict(emb.sparse_weights),
+                    "colbert_vectors": [list(vec.values) for vec in emb.colbert_vectors],
+                }
+                for emb in response.embeddings
+            ]
+
+        except grpc.RpcError as e:
+            raise e
+    
+    def embed_hybrid_documents(self, texts: List[str], model: str = "bge-m3") -> List[Dict[str, Any]]:
+        """Create hybrid embeddings for batch of documents.
+        
+        Args:
+            texts: List of documents to create embeddings.
+            model: ID of the model to use.
+            
+        Returns:
+            List[Dict]: List of hybrid embeddings.
+        """
+        
+        if not self._stub:
+            self._setup_connection()
+            if not self._stub:
+                raise ConnectionError("Unable to connect to embedding service")
+
+        try:
+            request = embedding_pb2.EmbedDocumentsRequest(texts=texts, model=model)
+            start_time = time.time()
+            response = self._stub.EmbedHybridDocuments(request, timeout=self.timeout)
+            process_time = time.time() - start_time
+
+            logger.debug(f"Created hybrid embeddings for {len(texts)} documents in {process_time:.3f}s")
+            return [
+                {
+                    "dense_vector": list(emb.dense_vector),
+                    "sparse_weights": dict(emb.sparse_weights),
+                    "colbert_vectors": [list(vec.values) for vec in emb.colbert_vectors],
+                }
+                for emb in response.embeddings
+            ]
+
+        except grpc.RpcError as e:
+            logger.error(f"Error creating hybrid embeddings for documents batch. gRPC EmbedHybridDocuments request failed. Details: {str(e)}")
+            raise
     
     def close(self):
         """Close connection."""

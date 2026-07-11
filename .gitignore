@@ -218,3 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 ai_models/
+logging_files
+data

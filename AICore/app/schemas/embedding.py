@@ -1,4 +1,9 @@
+"""Pydantic schemas for the embedding endpoint."""
+
+from __future__ import annotations
+
 from pydantic import BaseModel, Field
+
 
 class EmbedHybridResponse(BaseModel):
     """Hybrid embedding result."""

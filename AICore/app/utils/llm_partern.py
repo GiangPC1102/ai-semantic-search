@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -187,22 +186,6 @@ class LLM:
             logger.error("LLM chat failed: %s", exc)
             raise LLMError(f"Gọi LLM thất bại: {exc}") from exc
 
-    async def achat(
-        self,
-        messages: list[dict[str, str]],
-        **kwargs: Any,
-    ) -> LLMResponse:
-        """Gọi chat completion bất đồng bộ."""
-        try:
-            response = await litellm.acompletion(
-                messages=messages,
-                **self._build_kwargs(**kwargs),
-            )
-            return self._parse_response(response)
-        except Exception as exc:
-            logger.error("LLM achat failed: %s", exc)
-            raise LLMError(f"Gọi LLM thất bại: {exc}") from exc
-
     def stream(
         self,
         messages: list[dict[str, str]],
@@ -223,37 +206,6 @@ class LLM:
             logger.error("LLM stream failed: %s", exc)
             raise LLMError(f"Stream LLM thất bại: {exc}") from exc
 
-    async def astream(
-        self,
-        messages: list[dict[str, str]],
-        **kwargs: Any,
-    ) -> AsyncIterator[str]:
-        """Stream text từng chunk (bất đồng bộ)."""
-        try:
-            response = await litellm.acompletion(
-                messages=messages,
-                stream=True,
-                **self._build_kwargs(**kwargs),
-            )
-            async for chunk in response:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    yield delta.content
-        except Exception as exc:
-            logger.error("LLM astream failed: %s", exc)
-            raise LLMError(f"Stream LLM thất bại: {exc}") from exc
-
-    def complete_json(
-        self, system_prompt: str, user_payload: dict, **kwargs: Any
-    ) -> dict:
-        """Gọi chat completion buộc trả JSON, dùng cho các tác vụ trích xuất có cấu trúc."""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-        ]
-        response = self.chat(messages, response_format={"type": "json_object"}, **kwargs)
-        return json.loads(response.content)
-
     def complete(self, prompt: str, system: str | None = None, **kwargs: Any) -> LLMResponse:
         """Shortcut: gửi một prompt đơn giản."""
         messages: list[dict[str, str]] = []
@@ -261,13 +213,3 @@ class LLM:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         return self.chat(messages, **kwargs)
-
-    async def acomplete(
-        self, prompt: str, system: str | None = None, **kwargs: Any
-    ) -> LLMResponse:
-        """Shortcut bất đồng bộ: gửi một prompt đơn giản."""
-        messages: list[dict[str, str]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        return await self.achat(messages, **kwargs)

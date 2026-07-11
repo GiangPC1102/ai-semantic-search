@@ -24,6 +24,16 @@ class RankingSignalType(str, Enum):
     REVIEW = "review"
 
 
+SPECIALIST_SIGNALS: frozenset[RankingSignalType] = frozenset(
+    {
+        RankingSignalType.PRICE,
+        RankingSignalType.POPULARITY,
+        RankingSignalType.RATING,
+        RankingSignalType.REVIEW,
+    }
+)
+
+
 class QueryLanguage(str, Enum):
     """Dominant language of the raw query — by grammar, not by loanwords/brand names."""
 
@@ -141,8 +151,8 @@ class QueryUnderstandOutput(BaseModel):
     ranking_signals: list[RankingSignalItem] = Field(default_factory=list)
 
 
-class LLMQueryUnderstandPayload(BaseModel):
-    """Payload JSON mà LLM trả về — map sang ``QueryUnderstandOutput`` sau post-process."""
+class BackbonePayload(BaseModel):
+    """Payload JSON từ LLM backbone call — language, normalized_query, hard_filters, backbone signals."""
 
     normalized_query: str = ""
     language: QueryLanguage = Field(
@@ -182,6 +192,35 @@ class LLMQueryUnderstandPayload(BaseModel):
     @classmethod
     def coerce_ranking_signals(cls, value: Any) -> list[Any]:
         return [] if value is None else value
+
+
+class SpecialistPayload(BaseModel):
+    """Payload từ LLM specialist call — chọn 0 hoặc 1 trong 4 signal specialist."""
+
+    signal: RankingSignalType | None = Field(
+        default=None,
+        description=(
+            "One of price/popularity/rating/review, or null when no specialist "
+            "cue is present in the query."
+        ),
+    )
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @field_validator("signal", mode="before")
+    @classmethod
+    def coerce_signal(cls, value: Any) -> RankingSignalType | None:
+        if value is None or str(value).strip().lower() in {"", "null", "none"}:
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def signal_must_be_specialist(self) -> "SpecialistPayload":
+        if self.signal is not None and self.signal not in SPECIALIST_SIGNALS:
+            raise ValueError(
+                "signal must be one of "
+                f"{sorted(s.value for s in SPECIALIST_SIGNALS)} or null"
+            )
+        return self
 
 
 class QueryUnderstandRequest(BaseModel):

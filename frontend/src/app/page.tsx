@@ -267,7 +267,6 @@ export default function SearchPage() {
 
               const locationParts = [
                 poi?.address,
-                poi?.district,
                 poi?.city,
               ].filter(Boolean) as string[]
 
@@ -296,6 +295,8 @@ export default function SearchPage() {
                       <span className="rank-badge">#{i + 1}</span>
                       <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
                     </div>
+
+                    {bodyText && <p className="card-description">{bodyText}</p>}
 
                     {poi?.rating != null && (
                       <div className="card-rating-row">
@@ -330,8 +331,6 @@ export default function SearchPage() {
                         {hoursLabel}
                       </p>
                     )}
-
-                    {bodyText && <p className="card-description">{bodyText}</p>}
                   </div>
 
                   {/* ── Zone 2: System Analysis (why this result) ── */}

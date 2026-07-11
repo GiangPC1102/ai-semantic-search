@@ -1,4 +1,8 @@
-"""Đọc file Excel POI dataset và nạp dữ liệu vào PostgreSQL qua Prisma.
+"""Nạp dữ liệu POI dataset cố định (hard-coded) vào PostgreSQL qua Prisma.
+
+Dữ liệu lấy từ app/scripts/poi_seed_data.py (đã export sẵn từ file Excel gốc
+`data/ai_maps_track2_dataset_participants.xlsx`, sheet POI_Dataset + Attribute_Taxonomy)
+nên không cần đọc Excel khi ingest/seed database nữa.
 
 Chạy theo phase độc lập (mỗi phase idempotent, có thể chạy lại):
     Phase 2 — seed dữ liệu tham chiếu: signals (từ RankingSignalType) + attribute taxonomy gốc.
@@ -15,19 +19,13 @@ import argparse
 import asyncio
 import re
 import unicodedata
-from pathlib import Path
 from typing import Any
 
-import pandas as pd
 from prisma import Prisma
 from prisma.fields import Json
 
 from app.core.logger import logger
-
-WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT_XLSX = WORKSPACE_ROOT / "data" / "ai_maps_track2_dataset_participants.xlsx"
-DEFAULT_POI_SHEET = "POI_Dataset"
-DEFAULT_ATTRIBUTE_SHEET = "Attribute_Taxonomy"
+from app.scripts.poi_seed_data import POI_DATASET
 
 _RANGE_PATTERN = re.compile(r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$")
 _24H_MARKERS = ("24/7", "24h", "24 giờ", "cả ngày")
@@ -123,37 +121,26 @@ async def seed_signals(db: Prisma) -> int:
     return len(SIGNAL_DESCRIPTIONS)
 
 
-async def seed_attribute_taxonomy(db: Prisma, file: Path, sheet: str) -> int:
-    """Upsert attribute taxonomy gốc từ sheet Attribute_Taxonomy.
+async def seed_attribute_taxonomy(db: Prisma) -> int:
+    """Upsert attribute taxonomy gốc từ trường `attributes` (';'-separated) của POI_DATASET."""
+    names: set[str] = set()
+    for row in POI_DATASET:
+        names.update(_split_multi(row.get("attributes")))
 
-    `englishName` lấy từ `ATTRIBUTE_ENGLISH_NAMES`; attribute chưa có trong mapping
-    được để None (do `generate_attribute_descriptions.py` fill sau).
-    """
-    df = pd.read_excel(file, sheet_name=sheet, dtype=str)
     count = 0
-    for _, row in df.iterrows():
-        name = _normalize_token(row["attribute"])
-        description = _clean(row.get("semantic_meaning"))
-        english_name = ATTRIBUTE_ENGLISH_NAMES.get(name)
+    for name in sorted(names):
         await db.attribute.upsert(
             where={"attributeName": name},
-            data={
-                "create": {
-                    "attributeName": name,
-                    "description": description,
-                    "englishName": english_name,
-                },
-                "update": {"description": description, "englishName": english_name},
-            },
+            data={"create": {"attributeName": name}, "update": {}},
         )
         count += 1
-    logger.info("Phase 2: seeded %s attributes từ taxonomy", count)
+    logger.info("Phase 2: seeded %s attributes từ POI_DATASET", count)
     return count
 
 
-async def run_phase_2(db: Prisma, file: Path, attribute_sheet: str) -> None:
+async def run_phase_2(db: Prisma) -> None:
     await seed_signals(db)
-    await seed_attribute_taxonomy(db, file, attribute_sheet)
+    await seed_attribute_taxonomy(db)
 
 
 # ---------------------------------------------------------------------------
@@ -161,14 +148,13 @@ async def run_phase_2(db: Prisma, file: Path, attribute_sheet: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def ingest_poi_core(db: Prisma, file: Path, sheet: str) -> tuple[int, int]:
+async def ingest_poi_core(db: Prisma) -> tuple[int, int]:
     """Upsert brands + poi. Không xử lý attributes/tags (xem Phase 4)."""
-    df = pd.read_excel(file, sheet_name=sheet, dtype=str)
     brand_cache: dict[str, str] = {}
     poi_count = 0
     brand_count = 0
 
-    for _, row in df.iterrows():
+    for row in POI_DATASET:
         brand_name = _clean(row.get("brand"))
         brand_id: str | None = None
         if brand_name:
@@ -231,15 +217,14 @@ async def ingest_poi_core(db: Prisma, file: Path, sheet: str) -> tuple[int, int]
 # ---------------------------------------------------------------------------
 
 
-async def ingest_poi_relations(db: Prisma, file: Path, sheet: str) -> tuple[int, int]:
+async def ingest_poi_relations(db: Prisma) -> tuple[int, int]:
     """Ingest poi_attributes + poi_tags (tự tạo attribute/tag mới nếu chưa có)."""
-    df = pd.read_excel(file, sheet_name=sheet, dtype=str)
     attribute_cache: dict[str, str] = {}
     tag_cache: dict[str, str] = {}
     attr_links = 0
     tag_links = 0
 
-    for _, row in df.iterrows():
+    for row in POI_DATASET:
         poi_id = row["poi_id"].strip()
 
         for attr_name in _split_multi(row.get("attributes")):
@@ -298,29 +283,27 @@ async def ingest_poi_relations(db: Prisma, file: Path, sheet: str) -> tuple[int,
 # ---------------------------------------------------------------------------
 
 
-async def _run(phase: str, file: Path, poi_sheet: str, attribute_sheet: str) -> None:
+async def run_ingest(phase: str) -> None:
+    """Run one or all ingest phases (2/3/4/all). Manages its own DB connection."""
     db = Prisma()
     await db.connect()
     try:
         if phase in ("2", "all"):
-            await run_phase_2(db, file, attribute_sheet)
+            await run_phase_2(db)
         if phase in ("3", "all"):
-            await ingest_poi_core(db, file, poi_sheet)
+            await ingest_poi_core(db)
         if phase in ("4", "all"):
-            await ingest_poi_relations(db, file, poi_sheet)
+            await ingest_poi_relations(db)
     finally:
         await db.disconnect()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--file", type=Path, default=DEFAULT_INPUT_XLSX)
-    parser.add_argument("--poi-sheet", default=DEFAULT_POI_SHEET)
-    parser.add_argument("--attribute-sheet", default=DEFAULT_ATTRIBUTE_SHEET)
     parser.add_argument("--phase", choices=["2", "3", "4", "all"], default="all")
     args = parser.parse_args()
 
-    asyncio.run(_run(args.phase, args.file, args.poi_sheet, args.attribute_sheet))
+    asyncio.run(run_ingest(args.phase))
 
 
 if __name__ == "__main__":

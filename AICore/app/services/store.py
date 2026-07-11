@@ -243,11 +243,11 @@ class Store:
             signals: list[Signal] = await self._db.signal.find_many(
                 where={"vietnamName": {"not": None}},
             )
+            _signal_vi_name_cache = {s.signalName: s.vietnamName for s in signals if s.vietnamName}
         except PrismaError as exc:
-            logger.error("get_signal_vietnam_names failed: %s", exc)
-            raise StoreError(f"Truy vấn signals thất bại: {exc}") from exc
-
-        _signal_vi_name_cache = {s.signalName: s.vietnamName for s in signals if s.vietnamName}
+            # signals table may not exist in this schema version — treat as empty.
+            logger.warning("get_signal_vietnam_names skipped: %s", exc)
+            _signal_vi_name_cache = {}
         return _signal_vi_name_cache
 
     @staticmethod

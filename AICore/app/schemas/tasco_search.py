@@ -33,6 +33,29 @@ class TascoSearchRequest(BaseModel):
     )
 
 
+class PoiDetail(BaseModel):
+    """Full POI row (plus brand summary) reused from hard-filter cache."""
+
+    id: str
+    name: str
+    brand_id: str | None = None
+    brand_name: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
+    city: str | None = None
+    district: str | None = None
+    address: str | None = None
+    longitude: float | None = None
+    latitude: float | None = None
+    rating: float | None = None
+    review_count: int | None = None
+    popularity_score: float | None = None
+    price_level: str | None = None
+    open_hours: Any | None = None
+    description: str | None = None
+    vector_id: str | None = None
+
+
 class TascoSearchItem(BaseModel):
     """One final POI hit after attribute intersection."""
 
@@ -47,6 +70,10 @@ class TascoSearchItem(BaseModel):
     )
     matched_attribute_ids: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
+    poi: PoiDetail | None = Field(
+        default=None,
+        description="Full POI attributes from hard-filter cache (no extra DB query)",
+    )
 
 
 class TascoSearchResponse(BaseModel):

@@ -17,10 +17,10 @@ async def tasco_search(body: TascoSearchRequest) -> TascoSearchResponse:
 
     Flow:
     1. Query understanding → normalized_query + hard_filters + signals
-    2. Hard-filter POIs
+    2. Hard-filter POIs (cache full Poi rows + brand)
     3. Collect vectorIds
     4. Parallel POI + attribute vector search
-    5. Keep POI hits that have attributes from attribute search
+    5. Intersect attributes; attach ``poi`` detail from step-2 cache (no extra DB query)
 
     Example body:
 

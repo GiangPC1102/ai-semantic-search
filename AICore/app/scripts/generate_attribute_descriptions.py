@@ -8,7 +8,12 @@ time. Run this after Phase 4 of ``ingest_poi_data.py`` and before
 
     python -m app.scripts.generate_attribute_descriptions
     python -m app.scripts.ingest_attribute_vectors
-    
+
+Before generating, ``backfill_late_night_attributes`` runs automatically to link
+POIs closing after 22:00 to "mở khuya"/"mở muộn" — so the grounding samples the
+LLM sees for those two attributes reflect real ``open_hours`` data, not just
+whatever was manually tagged in the source dataset.
+
 By default every attribute is (re)generated so wording stays consistent across
 the whole taxonomy. Use ``--only-null`` to limit the run to attributes that
 have no description yet.
@@ -48,6 +53,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from app.core.config import settings
 from app.core.logger import logger
 from app.grpc.embedding.embedding_client import EmbeddingServiceClient
+from app.scripts.backfill_late_night_attributes import backfill_late_night_attributes
 from app.utils.llm_partern import LLM, LLMError
 
 DEFAULT_BATCH_SIZE = 25
@@ -55,6 +61,11 @@ DEFAULT_SAMPLES_PER_ATTR = 6
 DEFAULT_CLUSTER_DISTANCE_THRESHOLD = 0.25
 DEFAULT_KNN_NEIGHBORS = 5
 MAX_CONTRAST_NAMES = 8
+
+MANDATORY_RULE_SUFFIXES: dict[str, str] = {
+    "mở khuya": "Chỉ đúng khi địa điểm đóng cửa sau 22h hoặc còn hoạt động sau 22h.",
+    "mở muộn": "Chỉ đúng khi địa điểm đóng cửa sau 22h hoặc còn hoạt động sau 22h.",
+}
 
 # Vietnamese display names for ranking signals — curated, matches RankingSignalType enum.
 SIGNAL_VIETNAM_NAMES: dict[str, str] = {
@@ -71,7 +82,7 @@ SIGNAL_VIETNAM_NAMES: dict[str, str] = {
     "review": "Nhận xét",
 }
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = """
 Bạn là chuyên gia domain viết mô tả (description) NGẮN GỌN cho các THUỘC TÍNH (attribute) của \
 POI trong một hệ thống tìm kiếm bản đồ tiếng Việt.
 
@@ -87,6 +98,10 @@ vector BỎ QUA phủ định, nên một câu chứa từ khóa của attribute
 attribute đó — phản tác dụng.
 - Danh sách "cần phân biệt rõ với" CHỈ để bạn CHỌN từ ngữ đặc trưng riêng, viết sao cho mô tả \
 không trùng lặp với chúng. Bản thân các tên/từ khóa đó KHÔNG được xuất hiện trong output.
+- "queries" PHẢI neo vào CATEGORY trong "áp dụng cho" (+ từ chung như "gần đây", "gần tôi"). \
+TUYỆT ĐỐI KHÔNG chứa tên địa danh cụ thể (tỉnh/thành, quận, phường, tên địa điểm như "Đà Lạt", \
+"Hồ Xuân Hương") hay tên thương hiệu trong "gloss"/"synonyms"/"queries" — chúng cũng bị embed \
+và sẽ HÚT NHẦM truy vấn theo vị trí/thương hiệu về attribute này, cùng lý do với quy tắc phủ định ở trên.
 
 Với MỖI attribute bạn được cung cấp:
 - Danh mục POI mà attribute áp dụng (nếu có).
@@ -123,11 +138,11 @@ Attributes cần viết mô tả:
     • Homestay có sân vườn, phù hợp nhóm bạn và chụp ảnh.
 
 Ví dụ output (LƯU Ý: không nhắc "view đẹp"/"du lịch", không phủ định, không nói tới nhận phòng \
-khách sạn):
+khách sạn, queries neo vào category "Homestay"/"Điểm tham quan" thay vì địa danh cụ thể):
 {"items": [{"name": "check-in", "gloss": "địa điểm khung cảnh đẹp độc đáo để chụp ảnh sống ảo \
 đăng mạng xã hội", "synonyms": "chỗ chụp ảnh đẹp, sống ảo, điểm sống ảo, chụp hình, photo spot, \
-góc sống ảo", "queries": ["địa điểm check-in đẹp ở Đà Lạt", "chỗ chụp ảnh sống ảo gần đây", \
-"điểm sống ảo view đẹp"], "englishName": "check-in"}]}
+góc sống ảo", "queries": ["điểm tham quan để check-in sống ảo", "homestay chụp ảnh đẹp gần đây", \
+"chỗ chụp ảnh sống ảo gần tôi"], "englishName": "check-in"}]}
 """
 
 _JSON_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -395,12 +410,18 @@ async def _generate_batch(llm: LLM, batch: list[AttributeContext]) -> dict[str, 
 
     result: dict[str, dict[str, object]] = {}
     for item in items:
+        if not isinstance(item, dict):
+            logger.warning("Skipping malformed LLM item (not an object): %r", item)
+            continue
         name = str(item.get("name", "")).strip()
         gloss = str(item.get("gloss", "")).strip()
         synonyms = str(item.get("synonyms", "")).strip()
         queries = _normalize_queries(item.get("queries"))
         english_name = str(item.get("englishName", "")).strip()
         combined = _build_description(gloss, synonyms, queries)
+        rule_suffix = MANDATORY_RULE_SUFFIXES.get(name)
+        if rule_suffix:
+            combined = f"{combined}. {rule_suffix}" if combined else rule_suffix
         if name and combined:
             result[name] = {
                 "gloss": gloss,
@@ -464,6 +485,9 @@ async def generate_attribute_descriptions(
 
     await db.connect()
     try:
+        late_night_counts = await backfill_late_night_attributes(db)
+        logger.info("Backfilled late-night attribute links: %s", late_night_counts)
+
         await _update_signal_vietnam_names(db)
 
         attributes = await _fetch_attributes(db, only_null, limit)

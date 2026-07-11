@@ -4,8 +4,8 @@ services:
       context: ./docker/postgres
       dockerfile: Dockerfile
     container_name: aicore-postgres
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     environment:
       POSTGRES_USER: aicore
       POSTGRES_PASSWORD: aicore
@@ -22,9 +22,9 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: aicore-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    expose:
+      - "6333"
+      - "6334"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -34,10 +34,11 @@ services:
       context: ./AICore
       dockerfile: docker/Dockerfile.api
     container_name: aicore-api
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file:
-      - ./AICore/.env
+      - path: ./AICore/.env
+        required: false
     environment:
       ENV: dev
     volumes:
@@ -74,13 +75,13 @@ services:
       dockerfile: Dockerfile.cpu
       target: runtime
     container_name: aicore-embedding
-    ports:
-      - "50051:50051"
+    expose:
+      - "50051"
     volumes:
       - ./EmbeddingService/app:/app/app
       - ./EmbeddingService/core:/app/core
       - ./EmbeddingService/grpc_generated:/app/grpc_generated
-      - ./ai_models/bge-m3:/app/models/bge-m3:ro
+      - ./ai_models/bge-m3:/app/models/bge-m3
     environment:
       BGE_M3_MODEL_PATH: /app/models/bge-m3
       USE_CPU: "true"
@@ -88,7 +89,8 @@ services:
       CUDA_VISIBLE_DEVICES: ""
       ENV: dev
     env_file:
-      - ./EmbeddingService/.env
+      - path: ./EmbeddingService/.env
+        required: false
     restart: unless-stopped
 
 volumes:

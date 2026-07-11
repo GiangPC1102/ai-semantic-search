@@ -115,10 +115,10 @@ class EmbeddingServiceImplementation(embedding_pb2_grpc.EmbeddingServiceServicer
         try:
             start_time = time.time()
 
-            # Call model embedding
+            # Call model embedding — EmbedQueryRequest carries a single `text` field
             model = self.models[model_id]
             outputs = model.encode(
-                request.texts,
+                [request.text],
                 return_dense=True,
                 return_sparse=True,
                 return_colbert_vecs=True
@@ -126,30 +126,22 @@ class EmbeddingServiceImplementation(embedding_pb2_grpc.EmbeddingServiceServicer
 
             # Apply token pooling to ColBERT vectors
             colbert_vectors = self._pool_colbert_vectors(outputs['colbert_vecs'], settings.COLBERT_POOL_FACTOR)
-            
-            # Create hybrid embeddings
-            hybrid_embeddings = [
-                embedding_pb2.HybridEmbedding(
-                    dense_vector=dense.tolist(),
-                    sparse_weights=dict(sparse),
-                    colbert_vectors=[embedding_pb2.FloatVector(values=v) for v in colbert],
-                )
-                for dense, sparse, colbert in zip(
-                    outputs['dense_vecs'],
-                    outputs['lexical_weights'],
-                    colbert_vectors,
-                )
-            ]
+
+            # EmbedHybridResponse carries a single query result (not a batch)
+            dense = outputs['dense_vecs'][0]
+            sparse = outputs['lexical_weights'][0]
+            colbert = colbert_vectors[0]
 
             processing_time = time.time() - start_time
 
-            logger.info(f"Embed hybrid completed in {processing_time:.2f}s for {len(request.texts)} texts")
+            logger.info(f"Embed hybrid completed in {processing_time:.2f}s")
 
-            # Create and return response
             return embedding_pb2.EmbedHybridResponse(
-                embeddings=hybrid_embeddings,
+                dense_vector=dense.tolist(),
+                sparse_weights=dict(sparse),
+                colbert_vectors=[embedding_pb2.FloatVector(values=v) for v in colbert],
                 model=model_id,
-                processing_time=processing_time
+                processing_time=processing_time,
             )
 
         except Exception as e:

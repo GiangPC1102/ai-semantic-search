@@ -204,7 +204,7 @@ export default function SearchPage() {
 
                 return (
                   <div key={i} className="result-card">
-                    {/* Header: rank + name + score bar */}
+                    {/* Header: rank + name */}
                     <div className="result-meta">
                       <div className="result-rank-name">
                         <span className="rank-badge">#{i + 1}</span>
@@ -212,12 +212,6 @@ export default function SearchPage() {
                           <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
                           {r.poi_id && <span className="result-poi-id">{r.poi_id}</span>}
                         </div>
-                      </div>
-                      <div className="result-score-wrap">
-                        <div className="relevance-bar">
-                          <div className="relevance-fill" style={{ width: `${pct}%` }} />
-                        </div>
-                        <span className="result-score">{pct}%</span>
                       </div>
                     </div>
 

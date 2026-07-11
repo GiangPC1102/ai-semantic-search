@@ -64,9 +64,20 @@ function activeFilters(hf: HardFilters): string {
     .join(' · ') || ''
 }
 
+function StarRating({ rating }: { rating: number }) {
+  const filled = Math.round(rating)
+  return (
+    <span className="stars" aria-label={`${rating.toFixed(1)} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map(i => (
+        <span key={i} className={i <= filled ? 'star star--full' : 'star star--empty'}>★</span>
+      ))}
+    </span>
+  )
+}
+
 function IconPin() {
   return (
-    <svg className="result-location-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="icon-pin" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M7 1C4.79 1 3 2.79 3 5c0 3.25 4 8 4 8s4-4.75 4-8c0-2.21-1.79-4-4-4z"/>
       <circle cx="7" cy="5" r="1.2" fill="currentColor" stroke="none"/>
     </svg>
@@ -75,7 +86,7 @@ function IconPin() {
 
 function IconClock() {
   return (
-    <svg className="result-hours-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="icon-clock" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="7" cy="7" r="5.5"/>
       <path d="M7 4.5v3l1.5 1.5"/>
     </svg>
@@ -84,7 +95,7 @@ function IconClock() {
 
 function IconCheck() {
   return (
-    <svg className="reason-chip-icon" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="icon-check" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 5l2.5 2.5L8 3"/>
     </svg>
   )
@@ -143,12 +154,6 @@ export default function SearchPage() {
       if (h.attribute_id && h.name) attrMap[h.attribute_id] = h.name
     }
   }
-
-  const maxScore = data
-    ? Math.max(...data.items.map(r => r.score ?? 0), 0.001)
-    : 1
-
-  const activeSignals = new Set(data?.ranking_signals.map(s => s.signal) ?? [])
 
   return (
     <main className="page">
@@ -251,87 +256,104 @@ export default function SearchPage() {
                 .map(id => attrMap[id])
                 .filter(Boolean) as string[]
 
-              const cats = [r.brand, r.category, r.sub_category].filter(Boolean) as string[]
+              // Category line: brand · category · sub_category
+              const catParts = [r.brand, r.category, r.sub_category].filter(Boolean) as string[]
+
+              // Location line: address, district, city
               const locationParts = [r.address, r.district, r.city].filter(Boolean) as string[]
-              const showRating = activeSignals.has('rating') && r.rating != null
-              const showReviewCount = activeSignals.has('review_count') && r.review_count != null
-              const showPopularity = activeSignals.has('popularity_score') && r.popularity_score != null
-              const showPrice = activeSignals.has('price_level') && r.price_level != null
-              const priceStr = showPrice ? '$'.repeat(Math.min(r.price_level!, 4)) : null
+
+              const priceStr = r.price_level != null
+                ? '$'.repeat(Math.min(r.price_level, 4))
+                : null
+
+              const popularityPct = r.popularity_score != null
+                ? Math.round(r.popularity_score * 100)
+                : null
+
               const bodyText = r.description || r.text
+              const hasChips = reasons.length > 0 || (r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0
 
               return (
                 <div key={i} className="result-card">
-                  <div className="result-meta">
-                    <div className="result-rank-name">
-                      <span className="rank-badge">#{i + 1}</span>
-                      <div className="result-name-wrap">
-                        <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
-                        {r.poi_id && <span className="result-poi-id">{r.poi_id}</span>}
-                      </div>
-                    </div>
+
+                  {/* ── Name + rank ── */}
+                  <div className="card-header">
+                    <span className="rank-badge">#{i + 1}</span>
+                    <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
                   </div>
 
-                  {cats.length > 0 && (
-                    <div className="result-cats">
-                      {cats.map(c => <span key={c} className="result-cat-chip">{c}</span>)}
+                  {/* ── Rating row (always shown when data present) ── */}
+                  {r.rating != null && (
+                    <div className="card-rating-row">
+                      <span className="rating-score">{r.rating.toFixed(1)}</span>
+                      <StarRating rating={r.rating} />
+                      {r.review_count != null && (
+                        <span className="rating-count">({r.review_count.toLocaleString()} reviews)</span>
+                      )}
+                      {priceStr && (
+                        <>
+                          <span className="rating-dot">·</span>
+                          <span className="price-level">{priceStr}</span>
+                        </>
+                      )}
                     </div>
                   )}
 
+                  {/* ── Category / brand ── */}
+                  {catParts.length > 0 && (
+                    <p className="card-category">{catParts.join(' · ')}</p>
+                  )}
+
+                  {/* ── Address / location ── */}
                   {locationParts.length > 0 && (
-                    <p className="result-location">
+                    <p className="card-location">
                       <IconPin />
                       {locationParts.join(', ')}
                     </p>
                   )}
 
-                  {(showRating || priceStr || showPopularity) && (
-                    <div className="result-stats">
-                      {showRating && (
-                        <span className="stat-item">
-                          <span className="stat-star">★</span>
-                          {r.rating!.toFixed(1)}
-                          {showReviewCount && (
-                            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-                              &nbsp;({r.review_count!.toLocaleString()})
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      {priceStr && <span className="stat-item stat-price">{priceStr}</span>}
-                      {showPopularity && (
-                        <span className="stat-item">
-                          {(r.popularity_score! * 100).toFixed(0)}% popular
-                        </span>
-                      )}
-                    </div>
-                  )}
-
+                  {/* ── Opening hours ── */}
                   {r.opening_hours && (
-                    <p className="result-hours">
+                    <p className="card-hours">
                       <IconClock />
                       {r.opening_hours}
                     </p>
                   )}
 
-                  {bodyText && <p className="result-text">{bodyText}</p>}
-
-                  {reasons.length > 0 && (
-                    <div className="reason-chips">
-                      {reasons.map(name => (
-                        <span key={name} className="reason-chip">
-                          <IconCheck />
-                          {name}
-                        </span>
-                      ))}
+                  {/* ── Popularity bar ── */}
+                  {popularityPct != null && (
+                    <div className="card-popularity">
+                      <div className="popularity-bar-track">
+                        <div className="popularity-bar-fill" style={{ width: `${popularityPct}%` }} />
+                      </div>
+                      <span className="popularity-label">{popularityPct}% popular</span>
                     </div>
                   )}
 
-                  {((r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0) && (
-                    <div className="tag-chips">
-                      {(r.attributes ?? []).map(a => <span key={a} className="tag-chip">{a}</span>)}
-                      {(r.tags ?? []).map(t => <span key={t} className="tag-chip tag-chip--tag">{t}</span>)}
-                    </div>
+                  {/* ── Description ── */}
+                  {bodyText && <p className="card-description">{bodyText}</p>}
+
+                  {/* ── Matched attributes + tags ── */}
+                  {hasChips && (
+                    <>
+                      <hr className="card-chips-divider" />
+                      {reasons.length > 0 && (
+                        <div className="reason-chips">
+                          {reasons.map(name => (
+                            <span key={name} className="reason-chip">
+                              <IconCheck />
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {((r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0) && (
+                        <div className="tag-chips">
+                          {(r.attributes ?? []).map(a => <span key={a} className="tag-chip">{a}</span>)}
+                          {(r.tags ?? []).map(t => <span key={t} className="tag-chip tag-chip--tag">{t}</span>)}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )

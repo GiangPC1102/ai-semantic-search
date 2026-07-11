@@ -59,6 +59,11 @@ class Store:
         - ``brand``, ``category``, ``subcategory`` (qua bảng ``brands``)
         - ``city``, ``district`` (trên bảng ``poi``)
 
+        Category / subcategory cascade:
+        1. Có ``category`` → filter theo category trước.
+        2. Có thêm ``subcategory`` → filter tiếp trên subcategory.
+        3. Nếu subcategory trả về 0 → rollback về kết quả category.
+
         Signal ``opening_hours`` được lọc sau query:
         - ``open_time``: POI phải đang mở tại thời điểm đó
         - ``close_time``: POI phải còn mở tại thời điểm đó
@@ -73,17 +78,8 @@ class Store:
         """
         await self.connect()
 
-        where_clause = self._build_where_clause(hard_filters)
         opening_hours_pref = self._extract_opening_hours_preference(signals)
-
-        try:
-            pois = await self._db.poi.find_many(
-                where=where_clause or None,
-                include={"brand": True},
-            )
-        except PrismaError as exc:
-            logger.error("filter_hard_hint query failed: %s", exc)
-            raise StoreError(f"Truy vấn POI thất bại: {exc}") from exc
+        pois = await self._query_with_category_rollback(hard_filters)
 
         if opening_hours_pref is None:
             return pois
@@ -93,6 +89,57 @@ class Store:
             for poi in pois
             if matches_opening_hours_preference(poi.openHours, opening_hours_pref)
         ]
+
+    async def _query_with_category_rollback(
+        self,
+        hard_filters: HardFilters,
+    ) -> list[Poi]:
+        """Query POI; rollback subcategory → category khi subcategory rỗng."""
+        has_category = bool(hard_filters.category)
+        has_subcategory = bool(hard_filters.subcategory)
+
+        if not (has_category and has_subcategory):
+            return await self._find_pois(
+                self._build_where_clause(hard_filters),
+            )
+
+        category_pois = await self._find_pois(
+            self._build_where_clause(hard_filters, include_subcategory=False),
+        )
+        subcategory_pois = [
+            poi
+            for poi in category_pois
+            if self._poi_matches_subcategory(poi, hard_filters.subcategory)
+        ]
+
+        if not subcategory_pois:
+            logger.info(
+                "Subcategory filter empty (%s); rollback to category (%s) → %s POIs",
+                hard_filters.subcategory,
+                hard_filters.category,
+                len(category_pois),
+            )
+            return category_pois
+
+        return subcategory_pois
+
+    async def _find_pois(self, where_clause: dict[str, Any]) -> list[Poi]:
+        """Execute POI find_many with brand include."""
+        try:
+            return await self._db.poi.find_many(
+                where=where_clause or None,
+                include={"brand": True},
+            )
+        except PrismaError as exc:
+            logger.error("filter_hard_hint query failed: %s", exc)
+            raise StoreError(f"Truy vấn POI thất bại: {exc}") from exc
+
+    @staticmethod
+    def _poi_matches_subcategory(poi: Poi, subcategory: str | None) -> bool:
+        """Case-insensitive contains match on brand.subcategory."""
+        if not subcategory or poi.brand is None or not poi.brand.subcategory:
+            return False
+        return subcategory.strip().lower() in poi.brand.subcategory.lower()
 
     async def get_attribute_ids_by_poi_ids(
         self,
@@ -124,7 +171,11 @@ class Store:
         return mapping
 
     @staticmethod
-    def _build_where_clause(hard_filters: HardFilters) -> dict[str, Any]:
+    def _build_where_clause(
+        hard_filters: HardFilters,
+        *,
+        include_subcategory: bool = True,
+    ) -> dict[str, Any]:
         """Xây dựng Prisma ``where`` từ hard-filter."""
         where: dict[str, Any] = {}
 
@@ -134,14 +185,21 @@ class Store:
         if hard_filters.district:
             where["district"] = Store._insensitive_contains(hard_filters.district)
 
-        brand_filter = Store._build_brand_filter(hard_filters)
+        brand_filter = Store._build_brand_filter(
+            hard_filters,
+            include_subcategory=include_subcategory,
+        )
         if brand_filter:
             where["brand"] = {"is": brand_filter}
 
         return where
 
     @staticmethod
-    def _build_brand_filter(hard_filters: HardFilters) -> dict[str, Any]:
+    def _build_brand_filter(
+        hard_filters: HardFilters,
+        *,
+        include_subcategory: bool = True,
+    ) -> dict[str, Any]:
         """Gom filter brand/category/subcategory trên relation ``brand``."""
         brand_filter: dict[str, Any] = {}
 
@@ -151,7 +209,7 @@ class Store:
         if hard_filters.category:
             brand_filter["category"] = Store._insensitive_contains(hard_filters.category)
 
-        if hard_filters.subcategory:
+        if include_subcategory and hard_filters.subcategory:
             brand_filter["subcategory"] = Store._insensitive_contains(
                 hard_filters.subcategory,
             )

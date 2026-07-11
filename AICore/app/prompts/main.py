@@ -59,7 +59,7 @@ Normalize the raw query into a clear, natural Vietnamese sentence suitable for P
 
 ## 1. Hard filters (fill ONLY when confidently extractable from the query)
 - brand: canonical brand name (e.g. "Highlands Coffee", "Starbucks", "Phúc Long")
-- category: top-level POI type (e.g. "Quán cà phê", "Nhà hàng", "Bệnh viện")
+- category: top-level POI type (e.g. "Quán cà phê", "Nhà hàng", "Bệnh viện", "Khách sạn", "Trung tâm thương mại", "ATM", "Trạm xăng", "Điểm tham quan", "Rạp phim", "Công viên", "Trạm sạc điện", "Nhà thuốc")
 - subcategory: second-level POI type (e.g. "Coffee Chain", "Specialty Coffee", "Lẩu")
 - city: city (e.g. "HCM", "Hà Nội", "Đà Nẵng", "Đà Lạt")
 - district: district (e.g. "Quận 1", "Hoàn Kiếm", "Cầu Giấy")

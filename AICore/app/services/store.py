@@ -29,6 +29,8 @@ _signal_vi_name_cache: dict[str, str] | None = None
 class Store:
     """Kết nối PostgreSQL và lọc POI theo hard-filter từ query understanding."""
 
+    _FALLBACK_LIMIT = 200
+
     def __init__(self, db: Prisma | None = None) -> None:
         self._db = db if db is not None else Prisma()
         self._is_connected = False
@@ -102,37 +104,88 @@ class Store:
         has_category = bool(hard_filters.category)
         has_subcategory = bool(hard_filters.subcategory)
 
-        if not (has_category and has_subcategory):
-            return await self._find_pois(
-                self._build_where_clause(hard_filters),
+        if has_category and has_subcategory:
+            category_pois = await self._find_pois(
+                self._build_where_clause(hard_filters, include_subcategory=False),
             )
+            subcategory_pois = [
+                poi
+                for poi in category_pois
+                if self._poi_matches_subcategory(poi, hard_filters.subcategory)
+            ]
 
-        category_pois = await self._find_pois(
-            self._build_where_clause(hard_filters, include_subcategory=False),
-        )
-        subcategory_pois = [
-            poi
-            for poi in category_pois
-            if self._poi_matches_subcategory(poi, hard_filters.subcategory)
-        ]
+            if subcategory_pois:
+                return subcategory_pois
 
-        if not subcategory_pois:
             logger.info(
                 "Subcategory filter empty (%s); rollback to category (%s) → %s POIs",
                 hard_filters.subcategory,
                 hard_filters.category,
                 len(category_pois),
             )
-            return category_pois
+            pois = category_pois
+        else:
+            pois = await self._find_pois(self._build_where_clause(hard_filters))
 
-        return subcategory_pois
+        if pois:
+            return pois
 
-    async def _find_pois(self, where_clause: dict[str, Any]) -> list[Poi]:
+        return await self._relax_filters(hard_filters)
+
+    async def _relax_filters(self, hard_filters: HardFilters) -> list[Poi]:
+        """Nới dần hard-filter khi tier hiện tại rỗng.
+
+        Extraction sai một field không được phép loại sạch ứng viên đúng:
+        bỏ field mơ hồ nhất trước (category), rồi brand, giữ city/district
+        càng lâu càng tốt. Nếu vẫn rỗng, trả về không filter (giới hạn
+        ``_FALLBACK_LIMIT``) để vector search phía sau xếp hạng.
+        """
+        relaxed = hard_filters.model_copy(update={"subcategory": None, "category": None})
+
+        if hard_filters.category:
+            where = self._build_where_clause(relaxed)
+            if where:
+                pois = await self._find_pois(where)
+                if pois:
+                    logger.info(
+                        "Category filter empty (%s); rollback to brand/city/district → %s POIs",
+                        hard_filters.category,
+                        len(pois),
+                    )
+                    return pois
+
+        if hard_filters.brand:
+            relaxed = relaxed.model_copy(update={"brand": None})
+            where = self._build_where_clause(relaxed)
+            if where:
+                pois = await self._find_pois(where)
+                if pois:
+                    logger.info(
+                        "Brand filter empty (%s); rollback to city/district only → %s POIs",
+                        hard_filters.brand,
+                        len(pois),
+                    )
+                    return pois
+
+        logger.info(
+            "All hard filters empty for query filters=%s; fallback to unfiltered top-%s POIs",
+            hard_filters,
+            self._FALLBACK_LIMIT,
+        )
+        return await self._find_pois({}, take=self._FALLBACK_LIMIT)
+
+    async def _find_pois(
+        self,
+        where_clause: dict[str, Any],
+        *,
+        take: int | None = None,
+    ) -> list[Poi]:
         """Execute POI find_many with brand include."""
         try:
             return await self._db.poi.find_many(
                 where=where_clause or None,
                 include={"brand": True},
+                take=take,
             )
         except PrismaError as exc:
             logger.error("filter_hard_hint query failed: %s", exc)

@@ -1,56 +1,110 @@
-# AI Semantic Search & Ranking (Draft)
-`FastAPI` · `OpenAI` · `BGE-M3` · `Qdrant` · `ColBERT` · `PostgreSQL` · `Prisma` · `gRPC` · `Next.js`
+# AI Semantic Search & Ranking
 
+> AI-powered semantic search and ranking for Point of Interest (POI) discovery.  
+> **AABW Hackathon 2026 — Tasco Track P7**
 
-> Hệ thống tìm kiếm ngữ nghĩa và xếp hạng POI (Point of Interest) cho bài toán bản đồ — Hackathon Tasco Track 2.
-
-## Nhóm tác giả
-
-**Đội ngũ AI — Cube System Vietnam**
-
-| # | Thành viên |
-|---|---|
-| 1 | Nguyễn Văn A |
-| 2 | Trần Thị B |
-| 3 | Lê Văn C |
-| 4 | Phạm Thị D |
-| 5 | Hoàng Văn E |
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)
+![Qdrant](https://img.shields.io/badge/Qdrant-vector--db-DC143C?logo=qdrant&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=next.js&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![uv](https://img.shields.io/badge/uv-package--manager-DE5FE9?logo=astral&logoColor=white)
 
 ---
 
-## Mục lục
+## 📋 Table of Contents
 
-1. [Tổng quan giải pháp](#1-tổng-quan-giải-pháp)
-2. [Công nghệ sử dụng](#2-công-nghệ-sử-dụng)
-3. [Cấu trúc hệ thống](#3-cấu-trúc-hệ-thống)
-4. [Hướng dẫn cài đặt và chạy](#4-hướng-dẫn-cài-đặt-và-chạy)
-5. [API chính](#5-api-chính)
-6. [Đánh giá hệ thống](#6-đánh-giá-hệ-thống)
-7. [Kết quả](#7-kết-quả)
-8. [Tài liệu tham khảo](#8-tài-liệu-tham-khảo)
+| # | Section | What's inside |
+|---|---------|---------------|
+| 1 | [📌 Overview](#-overview) | What the system does, problem it solves, and a sample query |
+| 2 | [✨ Key Features](#-key-features) | Six distinctive technical capabilities of this pipeline |
+| 3 | [🛠️ Tech Stack](#-tech-stack) | AI/ML models, backend services, and frontend breakdown |
+| 4 | [🏗️ Architecture](#-architecture) | Runtime topology (service graph) + 6-stage search pipeline with Mermaid diagram |
+| 5 | [🚀 Getting Started](#-getting-started) | Prerequisites, model download, env setup, `make dev`, DB init, and first query |
+| 6 | [📁 Project Structure](#-project-structure) | Directory layout with role annotations |
+| 7 | [🔌 API Reference](#-api-reference) | All endpoints, `curl` example, and full JSON response shape |
+| 8 | [⚙️ Configuration](#-configuration) | Every environment variable with defaults and descriptions |
+| 9 | [📊 Evaluation](#-evaluation) | How to run the eval script, metrics explained, and illustrative benchmark results |
+| 10 | [🔄 Development Workflow](#-development-workflow) | Adding POIs, expanding attribute taxonomy, swapping LLM, debugging per stage |
+| 11 | [📚 Technical Documentation](#-technical-documentation) | Links to methodology and AI model docs in `AICore/docs/` |
+| 12 | [👥 Team](#-team) | Contributors |
 
 ---
 
-## 1. Tổng quan giải pháp
+## 📌 Overview
 
-Người dùng tìm địa điểm trên bản đồ bằng ngôn ngữ tự nhiên. Truy vấn thường **không** chỉ tên địa điểm cụ thể, mà mang **ý định / ngữ nghĩa**, ví dụ:
+Users search for locations on a map using natural language queries that carry **intent and semantics** rather than exact place names:
 
-> *“quán cà phê yên tĩnh có wifi để làm việc ở Quận 1”*  
-> *“ATM còn mở lúc 23h”*  
-> *“nhà hàng giá rẻ nổi tiếng”*
+> *"quiet café with WiFi for working in District 1"*  
+> *"ATM still open at 11 PM"*  
+> *"popular budget restaurant"*
 
-Hệ thống tách bài toán thành các lớp rõ ràng:
+This system resolves such queries through a multi-stage pipeline: an LLM extracts structured constraints from free-form text, a PostgreSQL hard-filter reduces the candidate space, and a hybrid semantic search (dense + sparse + ColBERT rerank) ranks the results — with explainable output at every stage.
 
+---
 
-| Lớp                 | Vai trò                                                                                                        |
-| ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Hard hints**      | `brand`, `category`, `subcategory`, `city`, `district`, `opening_hours` → filter deterministic trên PostgreSQL |
-| **Soft attributes** | Taxonomy động (wifi, yên tĩnh, phù hợp làm việc, …) → khớp bằng hybrid semantic search                         |
-| **POI corpus**      | Mô tả + metadata POI → hybrid retrieval (dense + sparse + ColBERT)                                             |
-| **Ranking signals** | LLM detect preference (price / rating / popularity / review, …) → rerank có giải thích                         |
+## ✨ Key Features
 
+- **Hybrid embedding in a single model** — BGE-M3 outputs dense (semantic), sparse (lexical/BM25-like), and ColBERT multi-vector representations from one inference call, eliminating separate retrieval systems.
+- **Dynamic soft-attribute taxonomy** — attributes (wifi, quiet, suitable for work, 24/7, …) are stored as embeddings and matched via semantic search, not hard-coded enum rules. The taxonomy expands without code changes.
+- **LLM query normalization** — GPT-4o-mini (via LiteLLM) handles Vietnamese slang, abbreviations, and mixed-language input ("cf q1 hcm" → structured filters + ranking signals).
+- **Parallel retrieval branches** — POI hybrid search and attribute hybrid search run concurrently; results are intersected at the final step.
+- **Explainable results** — every response includes `matched_attribute_ids` and `ranking_signals`, providing a full audit trail for stakeholders.
+- **Provider-agnostic LLM** — swap between OpenAI, Azure, Anthropic, or any LiteLLM-compatible provider by changing two env vars; no code changes required.
 
-### Pipeline `/tasco/search`
+---
+
+## 🛠️ Tech Stack
+
+### AI / ML
+
+| Component | Technology | Role |
+| --- | --- | --- |
+| Query Understanding | **GPT-4o-mini** via **LiteLLM** | Normalize query, extract hard filters & ranking signals (confidence scored) |
+| Embedding | **BGE-M3** (local, gRPC) | Dense (1024-dim) + Sparse (lexical) + ColBERT (late-interaction) |
+| Vector DB | **Qdrant** | Collections: `poi_data`, `attribute_data` |
+| POI rerank | **ColBERT MaxSim** | Token-level late-interaction rerank within filtered candidate set |
+| Attribute fusion | **RRF** (Reciprocal Rank Fusion) | Merge dense + sparse attribute scores with configurable threshold |
+
+### Backend & Infrastructure
+
+| Component | Technology |
+| --- | --- |
+| API | FastAPI + `uv` (Python ≥ 3.12) |
+| ORM | Prisma (PostgreSQL) |
+| Database | PostgreSQL 15+ |
+| Embedding service | gRPC Python service (BGE-M3) |
+| Orchestration | Docker Compose + Makefile |
+| Gateway (prod) | Nginx + Certbot (HTTPS) |
+| Package manager | **uv** (`uv sync` / `uv run`) |
+
+### Frontend
+
+| Component | Technology |
+| --- | --- |
+| UI | Next.js 14 (App Router) |
+| Interaction | Vietnamese search input → `/tasco/search` → query analysis + ranked POI results |
+
+---
+
+## 🏗️ Architecture
+
+### Runtime
+
+```
+Browser ──▶ Nginx (80/443) ──▶ frontend (Next.js :3000)
+                            ╲
+                             ▶ aicore-api (FastAPI :8000)
+                                   │
+              ┌────────────────────┼────────────────────┐
+              ▼                    ▼                    ▼
+         PostgreSQL             Qdrant           aicore-embedding
+      (brands/poi/attrs/     poi_data +          gRPC :50051
+       signals/tags)         attribute_data      BGE-M3 (CPU)
+```
+
+### Search Pipeline — `POST /tasco/search`
 
 ```mermaid
 flowchart TD
@@ -65,187 +119,79 @@ flowchart TD
   INT["5. Intersect soft-attributes<br/>+ final sort"]
 ```
 
+| Stage | Inputs | Outputs |
+| --- | --- | --- |
+| **Query Understanding** | Raw query string | `normalized_query`, `hard_filters`, `ranking_signals[]` |
+| **Hard filter** | `hard_filters` → PostgreSQL | `vectorIds[]` (candidate set) |
+| **POI hybrid** | `vectorIds` + `normalized_query` → Qdrant `poi_data` | Top-K POIs with ColBERT score |
+| **Attribute hybrid** | `normalized_query` → Qdrant `attribute_data` | `matched_attribute_ids[]` |
+| **Signal rerank** | POI metadata × `ranking_signals` | Reordered POI list |
+| **Final intersect** | POI results ∩ attribute matches | Ranked response sorted by `matched_attribute_count` then `score` |
 
-
-**Ý tưởng cốt lõi**
-
-1. **LLM** hiểu query → ràng buộc cứng + ranking signals (không chấm điểm từng POI).
-2. **Hard filter sớm** trên DB → giảm mạnh candidate.
-3. **Soft-attribute** khớp ý định mở bằng embedding + RRF (không hard-map enum).
-4. **POI hybrid** trong tập đã lọc: lexical (sparse) + semantic (dense) + ColBERT MaxSim.
-5. **Rerank theo preference** khi user nhắc giá / chất lượng / độ phổ biến.
-6. **Final order** ưu tiên POI khớp nhiều soft-attribute hơn, rồi mới tới vector score.
-
-Chi tiết methodology: `[AICore/docs/6.tasco_search_methodology.md](AICore/docs/6.tasco_search_methodology.md)`  
-Chi tiết ranking signals & AI models: `[AICore/docs/7.ranking_signals_and_ai_models.md](AICore/docs/7.ranking_signals_and_ai_models.md)`
-
----
-
-## 2. Công nghệ sử dụng
-
-### 2.1. AI / ML
-
-
-| Thành phần          | Công nghệ                                                          | Vai trò                                                                    |
-| ------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| Query Understanding | **GPT-4o-mini** qua **LiteLLM**                                    | Chuẩn hóa query, extract hard filters & ranking signals                    |
-| Embedding           | **BGE-M3** (local, gRPC)                                           | Dense (semantic) + Sparse (lexical/BM25-like) + ColBERT (late-interaction) |
-| Vector DB           | **Qdrant**                                                         | 2 collections: `poi_data`, `attribute_data`                                |
-| Fusion / rerank     | ColBERT MaxSim (POI), **RRF** (attribute), metadata multi-key sort | Ranking đa tầng, explainable                                               |
-
-
-### 2.2. Backend & hạ tầng
-
-
-| Thành phần        | Công nghệ                     |
-| ----------------- | ----------------------------- |
-| API               | FastAPI + `uv` (Python ≥ 3.12) |
-| ORM               | Prisma (PostgreSQL)           |
-| DB                | PostgreSQL                    |
-| Embedding service | gRPC Python service           |
-| Orchestration     | Docker Compose, Makefile      |
-| Gateway (prod)    | Nginx + Certbot (HTTPS)       |
-| Package manager   | **uv** (`uv sync` / `uv run`) |
-
-
-### 2.3. Frontend
-
-
-| Thành phần | Công nghệ                                                                          |
-| ---------- | ---------------------------------------------------------------------------------- |
-| UI         | Next.js 14 (App Router)                                                            |
-| Tương tác  | Ô tìm kiếm tiếng Việt → gọi `/tasco/search`, hiển thị query analysis + kết quả POI |
-
-
----
-
-## 3. Cấu trúc hệ thống
-
-### 3.1. Kiến trúc runtime
-
-```
-Browser ──▶ Nginx (80/443) ──▶ frontend (Next.js :3000)
-                            ╲
-                             ▶ aicore-api (FastAPI :8000)
-                                   │
-              ┌────────────────────┼────────────────────┐
-              ▼                    ▼                    ▼
-         PostgreSQL             Qdrant           aicore-embedding
-      (brands/poi/attrs/     poi_data +          gRPC :50051
-       signals/tags)         attribute_data      BGE-M3 (CPU)
-```
-
-### 3.2. Cấu trúc thư mục
-
-```
-AABW-HACKATHON-2026/
-├── AICore/                 # Backend FastAPI + data pipeline + docs
-│   ├── app/
-│   │   ├── api/            # Endpoints
-│   │   ├── helpers/        # Query understand, signal reranker, …
-│   │   ├── services/       # TascoSearch, Store, VectorStore
-│   │   ├── scripts/        # Setup DB, ingest, evaluate
-│   │   └── prompts/        # LLM prompts
-│   └── docs/               # Tài liệu kỹ thuật
-├── EmbeddingService/       # gRPC BGE-M3 hybrid embedding
-├── frontend/               # Next.js search UI
-├── ai_models/bge-m3/       # Model weights
-├── data/                   # Dataset Excel + evaluation output
-├── docker/                 # Dockerfiles phụ trợ
-├── docker-compose.yml
-├── Makefile
-└── README.md               # File này
-```
-
-### 3.3. Data model (rút gọn)
+### Data Model
 
 ```
 Brand ──< Poi >──< PoiAttribute >── Attribute
-              └─< PoiTag >──── Tag
-Signal (catalog ranking signal)
+              └─< PoiTag >──────── Tag
+Signal (catalog of ranking signals)
 ```
 
-- **Poi**: địa lý, rating, review_count, popularity_score, price_level, open_hours, description, `vectorId`
-- **Attribute**: name + description (LLM-enriched) + `vectorId`
-- **poi_attributes**: cầu nối soft-intent ↔ POI sau retrieval
+- **Poi**: geo, rating, review_count, popularity_score, price_level, open_hours, description, `vectorId`
+- **Attribute**: name + LLM-enriched description + `vectorId`
+- **poi_attributes**: bridge table linking soft-intent attributes to POIs after retrieval
 
 ---
 
-## 4. Hướng dẫn cài đặt và chạy
+## 🚀 Getting Started
 
-### 4.1. Yêu cầu
+### Prerequisites
 
-- Docker + Docker Compose
-- [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12 — `uv` tự quản lý interpreter)
-- API key LLM (`OPENAI_API_KEY` hoặc provider tương đương qua LiteLLM)
-- Model weights BGE-M3 tại `ai_models/bge-m3/` (mount vào EmbeddingService)
+| Requirement | Notes |
+| --- | --- |
+| Docker + Docker Compose | All services run as containers |
+| [uv](https://docs.astral.sh/uv/) | Python ≥ 3.12 — `uv` manages the interpreter |
+| LLM API key | `OPENAI_API_KEY` or any LiteLLM-compatible provider |
+| BGE-M3 weights | Downloaded to `ai_models/bge-m3/` (step 2 below) |
 
-Cài `uv` (nếu chưa có):
+### Step 1 — Install `uv`
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Tải model embedding (chạy từ thư mục gốc repo, trước `make dev`):
+### Step 2 — Download embedding model
+
+Run from the repo root before starting services:
 
 ```bash
 uv run --with huggingface_hub python scripts/download_bge_m3.py
-# lưu vào ai_models/bge-m3/
-# tải lại: uv run --with huggingface_hub python scripts/download_bge_m3.py --force
+# Force re-download: add --force
 ```
 
-### 4.2. Cấu hình môi trường
-
-Copy và chỉnh `AICore/.env` từ `AICore/.env.example`:
+### Step 3 — Configure environment
 
 ```bash
 cp AICore/.env.example AICore/.env
-# Điền OPENAI_API_KEY, kiểm tra DATABASE_URL / QDRANT_* / EMBEDDING_* / LLM_*
+# Required: OPENAI_API_KEY
+# Verify: DATABASE_URL, QDRANT_*, EMBEDDING_*, LLM_*
 ```
 
-Các biến quan trọng:
-
-
-| Biến                                        | Mặc định / ý nghĩa            |
-| ------------------------------------------- | ----------------------------- |
-| `LLM_MODEL`                                 | `gpt-4o-mini`                 |
-| `EMBEDDING_SERVICE_MODEL`                   | `bge-m3`                      |
-| `QDRANT_POI_COLLECTION`                     | `poi_data`                    |
-| `QDRANT_ATTRIBUTE_COLLECTION`               | `attribute_data`              |
-| `TASCO_POI_TOP_K` / `TASCO_ATTRIBUTE_TOP_K` | `20`                          |
-| `ATTRIBUTE_SEARCH_RRF_THRESHOLD`            | ngưỡng RRF cho soft-attribute |
-
-
-### 4.3. Khởi động hạ tầng
-
-Từ thư mục gốc repo:
+### Step 4 — Start all services
 
 ```bash
 make dev
-# tương đương: docker compose up -d --build
+# Equivalent to: docker compose up -d --build
 ```
 
-Services:
+| Service | Endpoint |
+| --- | --- |
+| aicore-api | [http://localhost:8000](http://localhost:8000) |
+| Qdrant | [http://localhost:6333](http://localhost:6333) |
+| PostgreSQL | localhost:5432 (`aicore` / `aicore`) |
+| Embedding (gRPC) | localhost:50051 |
+| Frontend | [http://localhost:3000](http://localhost:3000) |
 
-
-| Service          | URL                                                                 |
-| ---------------- | ------------------------------------------------------------------- |
-| aicore-api       | [http://localhost:8000](http://localhost:8000)                      |
-| Qdrant           | [http://localhost:6333](http://localhost:6333)                      |
-| PostgreSQL       | localhost:5432 (`aicore` / `aicore`)                                |
-| Embedding (gRPC) | localhost:50051                                                     |
-| Frontend         | [http://localhost:3000](http://localhost:3000) (nếu compose expose) |
-
-
-Dừng:
-
-```bash
-make down
-```
-
-### 4.4. Init database
-
-Sau khi hạ tầng đã chạy (`make dev`), khởi tạo schema + seed dữ liệu + ingest vector trong `AICore/` bằng **uv** (không dùng `pip` / `python` hệ thống):
+### Step 5 — Initialize database & vectors
 
 ```bash
 cd AICore
@@ -253,46 +199,78 @@ uv sync
 uv run python -m app.scripts.setup_database
 ```
 
-Lệnh trên thực hiện: Prisma migrate → ingest POI/attributes/signals → sinh mô tả attribute (LLM) → embed & upsert Qdrant.
+Runs in sequence: Prisma migrate → seed POI data → generate attribute descriptions (LLM) → embed & upsert both Qdrant collections.
 
 ```bash
-# Bỏ qua migrate nếu schema đã có
+# Skip migration if schema already exists
 uv run python -m app.scripts.setup_database --skip-migrate
 
-# Xoá và tạo lại collection Qdrant rồi ingest lại vector
+# Drop and recreate Qdrant collections, then re-ingest
 uv run python -m app.scripts.setup_database --recreate-vectors
 ```
 
-### 4.5. Kiểm tra nhanh
+### Step 6 — Verify
 
 ```bash
+# Search
 curl -X POST http://localhost:8000/tasco/search \
   -H 'Content-Type: application/json' \
   -d '{"query": "quán cafe yên tĩnh có wifi ở Quận 1"}'
+
+# Health
+curl http://localhost:8000/healthcheck
 ```
 
-Health:
+Stop all services:
 
 ```bash
-curl http://localhost:8000/healthcheck
+make down
 ```
 
 ---
 
-## 5. API chính
+## 📁 Project Structure
 
+```
+AABW-HACKATHON-2026/
+├── AICore/                       # FastAPI backend + data pipeline
+│   ├── app/
+│   │   ├── api/                  # Route handlers
+│   │   ├── helpers/              # Query understanding, signal reranker
+│   │   ├── services/             # TascoSearch, VectorStore, Store
+│   │   ├── scripts/              # DB setup, ingest, evaluate
+│   │   └── prompts/              # LLM prompt templates
+│   ├── docs/
+│   │   ├── 6.tasco_search_methodology.md
+│   │   └── 7.ranking_signals_and_ai_models.md
+│   └── prisma/schema.prisma
+├── EmbeddingService/             # gRPC BGE-M3 service
+├── frontend/                     # Next.js 14 search UI
+├── ai_models/bge-m3/             # Model weights (gitignored)
+├── data/                         # Dataset Excel + evaluation output
+├── docker/                       # Auxiliary Dockerfiles
+├── scripts/                      # Repo-level utility scripts
+├── docker-compose.yml
+├── Makefile
+└── README.md
+```
 
-| Method | Path                           | Mô tả                                                                       |
-| ------ | ------------------------------ | --------------------------------------------------------------------------- |
-| `GET`  | `/healthcheck`                 | Health check                                                                |
-| `POST` | `/tasco/search`                | **Pipeline end-to-end** (understand → filter → hybrid → rerank → intersect) |
-| `POST` | `/query-understand/understand` | Chỉ LLM understand (debug)                                                  |
-| `POST` | `/poi/filter`                  | Chỉ hard-filter Postgres                                                    |
-| `POST` | `/vector/search`               | Chỉ hybrid vector search                                                    |
-| `POST` | `/embedding/hybrid`            | Gọi thẳng embedding service                                                 |
+---
 
+## 🔌 API Reference
 
-### Ví dụ request / response (rút gọn)
+### Endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/healthcheck` | Health check |
+| `POST` | `/tasco/search` | **End-to-end pipeline** — understand → filter → hybrid → rerank → intersect |
+| `POST` | `/query-understand/understand` | LLM query understanding only (debug) |
+| `POST` | `/poi/filter` | Hard-filter PostgreSQL only (debug) |
+| `POST` | `/vector/search` | Hybrid vector search only (debug) |
+| `POST` | `/embedding/hybrid` | Direct embedding service call |
+
+### Example — `POST /tasco/search`
 
 ```bash
 curl -X POST http://localhost:8000/tasco/search \
@@ -330,114 +308,174 @@ curl -X POST http://localhost:8000/tasco/search \
 
 ---
 
-## 6. Đánh giá hệ thống
+## ⚙️ Configuration
 
-### 6.1. Phương pháp
+Copy `AICore/.env.example` to `AICore/.env`.
 
-Script: `AICore/app/scripts/evaluate_tasco_search.py`
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LLM_PROVIDER` | `openai` | LiteLLM provider (swap without code changes) |
+| `LLM_MODEL` | `gpt-4o-mini` | LLM model identifier |
+| `EMBEDDING_SERVICE_MODEL` | `bge-m3` | Embedding model served via gRPC |
+| `QDRANT_POI_COLLECTION` | `poi_data` | Qdrant collection for POI vectors |
+| `QDRANT_ATTRIBUTE_COLLECTION` | `attribute_data` | Qdrant collection for attribute vectors |
+| `TASCO_POI_TOP_K` | `20` | Candidate POIs to retrieve before rerank |
+| `TASCO_ATTRIBUTE_TOP_K` | `20` | Candidate attributes to retrieve |
+| `ATTRIBUTE_SEARCH_RRF_THRESHOLD` | — | Minimum RRF score to include a soft-attribute match |
 
-- Input: sheet đánh giá công khai (expected POI IDs theo query)
-- Gọi `POST /tasco/search`
-- Metrics @K (mặc định K=10):
+---
 
+## 📊 Evaluation
 
-| Metric          | Ý nghĩa                                    |
-| --------------- | ------------------------------------------ |
-| **Recall@K**    | Tỷ lệ POI đúng được retrieve trong top-K   |
-| **Precision@K** | Tỷ lệ POI đúng trong top-K                 |
-| **nDCG@K**      | Chất lượng thứ tự (graded ranking)         |
-| **AP@K / MAP**  | Average Precision / Mean Average Precision |
-
+### Running the evaluation script
 
 ```bash
 cd AICore
 uv run python -m app.scripts.evaluate_tasco_search
-# Output mặc định: data/tasco_search_evaluation.xlsx
+# Output: data/tasco_search_evaluation.xlsx
 ```
 
-### 6.2. Tiêu chí đánh giá nội bộ
+The script reads the public evaluation sheet (expected POI IDs per query), calls `POST /tasco/search` for each query, and computes retrieval metrics at K=10 (configurable).
 
+### Metrics
 
-| Khía cạnh           | Cách đánh giá                                                         |
-| ------------------- | --------------------------------------------------------------------- |
-| Query understanding | Hard filters / signals đúng intent (manual + sample set)              |
-| Soft-intent         | Attribute hits có giải thích được (`matched_attribute_ids`)           |
-| Ranking preference  | Query có “giá rẻ / nổi tiếng / ngon” thì metadata rerank có hiệu lực  |
-| Latency             | Understand + 2 nhánh vector song song; hard filter giảm candidate sớm |
-| Explainability      | Response có đủ audit trail để giải thích kết quả cho stakeholder      |
+| Metric | Description |
+| --- | --- |
+| **Recall@K** | Fraction of correct POIs retrieved in top-K |
+| **Precision@K** | Fraction of top-K results that are correct |
+| **nDCG@K** | Ranking quality (graded relevance) |
+| **AP@K / MAP** | Average Precision / Mean Average Precision |
 
+### Internal quality dimensions
 
----
+| Dimension | Signal |
+| --- | --- |
+| Query understanding | Hard filters / signals match query intent |
+| Soft-intent | `matched_attribute_ids` are explainable for the query |
+| Preference rerank | "budget / popular / great food" queries respond to signal rerank |
+| Latency | Parallel branches + early hard-filter keeps response time low |
+| Explainability | Response provides full audit trail per result |
 
-## 7. Kết quả
+### Illustrative Results
 
-> **Lưu ý:** Bảng dưới đây là **mockup tạm thời** phục vụ báo cáo / demo. Số liệu thật lấy từ `data/tasco_search_evaluation.xlsx` sau khi chạy evaluation trên môi trường đã setup đầy đủ.
+> **Note:** Values below are illustrative. Run the evaluation script against a fully configured environment to obtain real metrics:
+> ```bash
+> cd AICore && uv run python -m app.scripts.evaluate_tasco_search
+> ```
 
-### 7.1. Metrics tổng hợp (mock)
+| Metric | *Illustrative* value (@K=10) |
+| --- | --- |
+| Mean Recall@10 | **0.78** |
+| Mean Precision@10 | **0.41** |
+| Mean nDCG@10 | **0.72** |
+| MAP@10 | **0.69** |
 
-
-| Metric            | Giá trị (mock @K=10) |
-| ----------------- | -------------------- |
-| Mean Recall@10    | **0.78**             |
-| Mean Precision@10 | **0.41**             |
-| Mean nDCG@10      | **0.72**             |
-| MAP@10            | **0.69**             |
-
-
-### 7.2. Kết quả theo nhóm query (mock)
-
-
-| Nhóm query                | Ví dụ                       | Recall@10 | nDCG@10 | Nhận xét                           |
-| ------------------------- | --------------------------- | --------- | ------- | ---------------------------------- |
-| Hard geo + category       | “cafe Quận 1”               | 0.85      | 0.80    | Hard-filter hiệu quả               |
-| Soft-intent đa thuộc tính | “yên tĩnh có wifi làm việc” | 0.74      | 0.68    | Phụ thuộc attribute taxonomy + RRF |
-| Preference giá / rating   | “nhà hàng ngon giá rẻ”      | 0.71      | 0.70    | Signal rerank cải thiện thứ tự     |
-| Opening hours             | “ATM còn mở lúc 23h”        | 0.80      | 0.75    | Constraint giờ lọc đúng            |
-| Mixed language / teencode | “cf q1 hcm”                 | 0.76      | 0.71    | Normalize LLM ổn định              |
-
-
-### 7.3. Ví dụ qualitative (mock)
-
-
-| Query                                 | Top-1 kỳ vọng (mock)        | Vì sao hợp lý                   |
-| ------------------------------------- | --------------------------- | ------------------------------- |
-| “quán cafe yên tĩnh có wifi ở Quận 1” | The Workshop Coffee         | Khớp soft attrs + đúng district |
-| “Highlands Nguyễn Huệ”                | Highlands Coffee Nguyễn Huệ | Hard brand + location           |
-| “ATM mở 24/7 gần trung tâm”           | (POI ATM 24/7)              | Attribute 24/7 + opening_hours  |
-
+| Query group | Example | Recall@10 | nDCG@10 | Notes |
+| --- | --- | --- | --- | --- |
+| Hard geo + category | "cafe Quận 1" | 0.85 | 0.80 | Hard-filter effective |
+| Multi-attribute soft-intent | "quiet with WiFi for work" | 0.74 | 0.68 | Attribute taxonomy + RRF |
+| Price / rating preference | "popular budget restaurant" | 0.71 | 0.70 | Signal rerank improves ordering |
+| Opening hours constraint | "ATM still open at 11 PM" | 0.80 | 0.75 | Hour constraint filtered correctly |
+| Mixed language / slang | "cf q1 hcm" | 0.76 | 0.71 | LLM normalization stable |
 
 ---
 
-## 8. Tài liệu tham khảo
+## 🔄 Development Workflow
 
-### Trong repo
+### Adding or updating POI data
 
-
-| Tài liệu                                                                                           | Nội dung                                                    |
-| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `[AICore/docs/6.tasco_search_methodology.md](AICore/docs/6.tasco_search_methodology.md)`           | Retrieval & ranking methodology chi tiết                    |
-| `[AICore/docs/7.ranking_signals_and_ai_models.md](AICore/docs/7.ranking_signals_and_ai_models.md)` | Ranking signals, LLM/Embedding, cách giải thích kết quả     |
-| `[AICore/README.md](AICore/README.md)`                                                             | Hướng dẫn setup DB / ingest / vector chi tiết               |
-
-
-### Dataset
-
-- `data/ai_maps_track2_dataset_participants.xlsx` — POI dataset Track 2
-- `data/tasco_search_evaluation.xlsx` — output evaluation
-
----
-
-## Giấy phép / Hackathon
-
-Dự án phục vụ **AABW Hackathon 2026 — Tasco Track 2 (AI Maps / Semantic Search)**.
+1. Update `AICore/app/scripts/poi_seed_data.py` with new entries.
+2. Re-run ingest (idempotent — upserts by unique key):
 
 ```bash
-# Quick start (dùng uv xuyên suốt)
-uv run --with huggingface_hub python scripts/download_bge_m3.py
-make dev
-cd AICore && uv sync && uv run python -m app.scripts.setup_database
-curl -X POST http://localhost:8000/tasco/search \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "quán cafe yên tĩnh có wifi ở Quận 1"}'
+cd AICore
+uv run python -m app.scripts.ingest_poi_data
+uv run python -m app.scripts.ingest_poi_vectors
 ```
 
+### Expanding the attribute taxonomy
+
+1. Add rows to the attribute source (name + description).
+2. Regenerate descriptions if needed:
+
+```bash
+uv run python -m app.scripts.generate_attribute_descriptions --only-null
+uv run python -m app.scripts.ingest_attribute_vectors
+```
+
+### Swapping the LLM provider
+
+No code changes required — update two env vars in `AICore/.env`:
+
+```bash
+LLM_PROVIDER=anthropic        # or azure, openai, etc.
+LLM_MODEL=claude-haiku-4-5-20251001
+```
+
+LiteLLM handles routing. See [LiteLLM providers](https://docs.litellm.ai/docs/providers) for the full list.
+
+### Debugging individual pipeline stages
+
+Use the dedicated debug endpoints to isolate each stage:
+
+```bash
+# Stage 1: LLM query understanding only
+curl -X POST http://localhost:8000/query-understand/understand \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "cf yên tĩnh q1"}'
+
+# Stage 2: Hard-filter only
+curl -X POST http://localhost:8000/poi/filter \
+  -H 'Content-Type: application/json' \
+  -d '{"category": "Quán cà phê", "district": "Quận 1"}'
+
+# Stage 3: Vector search only
+curl -X POST http://localhost:8000/vector/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "yên tĩnh có wifi", "top_k": 5}'
+```
+
+### Rebuilding a single service
+
+```bash
+# Rebuild and restart AICore API only
+make build-aicore-api
+
+# Rebuild embedding service only
+make build-embedding
+```
+
+---
+
+## 📚 Technical Documentation
+
+| Document | Contents |
+| --- | --- |
+| [AICore/docs/6.tasco_search_methodology.md](AICore/docs/6.tasco_search_methodology.md) | Full retrieval & ranking methodology with stage-by-stage detail |
+| [AICore/docs/7.ranking_signals_and_ai_models.md](AICore/docs/7.ranking_signals_and_ai_models.md) | AI models used, ranking signal taxonomy, stakeholder explanation guide |
+| [AICore/README.md](AICore/README.md) | DB setup, ingest pipeline, and vector ingestion step-by-step |
+
+### Dataset files
+
+- `data/ai_maps_track2_dataset_participants.xlsx` — POI dataset Track P7
+- `data/tasco_search_evaluation.xlsx` — evaluation script output
+
+---
+
+## 👥 Team
+
+**AI Team — Cube System Vietnam**
+
+| # | Member |
+| --- | --- |
+| 1 | Phan Chi Giang |
+| 2 | Pham Le Phong |
+| 3 | Phan Tien Quan |
+| 4 | Nguyen Le Thanh |
+| 5 | Duong Xuan Hiep |
+
+---
+
+## 📄 License
+
+Built for **AABW Hackathon 2026 — Tasco Track P7 (AI Maps / Semantic Search)**.

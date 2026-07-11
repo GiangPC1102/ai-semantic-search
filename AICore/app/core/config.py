@@ -36,7 +36,7 @@ class BaseConfig:
         self.QDRANT_ATTRIBUTE_COLLECTION: str = os.getenv("QDRANT_ATTRIBUTE_COLLECTION", "attribute_data",)
 
         # Embedding Service
-        self.EMBEDDING_SERVICE_URL: str = os.getenv("EMBEDDING_SERVICE_URL", "aicore-embedding-service:50051")
+        self.EMBEDDING_SERVICE_URL: str = os.getenv("EMBEDDING_SERVICE_URL", "aicore-embedding:50051")
         self.EMBEDDING_SERVICE_MODEL: str = os.getenv("EMBEDDING_SERVICE_MODEL", "bge-m3")
         self.EMBEDDING_SERVICE_TIMEOUT: int = int(os.getenv("EMBEDDING_SERVICE_TIMEOUT", "30"))
         self.EMBEDDING_SERVICE_RETRY_COUNT: int = int(os.getenv("EMBEDDING_SERVICE_RETRY_COUNT", "3"))

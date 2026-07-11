@@ -112,6 +112,29 @@ function IconBrain() {
   )
 }
 
+function IconMedal() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 11 11" fill="currentColor" style={{ flexShrink: 0 }}>
+      <circle cx="5.5" cy="6.5" r="3.5"/>
+      <path d="M3.5 3.5L2 1h7L7.5 3.5" fill="currentColor" opacity="0.6"/>
+    </svg>
+  )
+}
+
+function RankBadge({ rank }: { rank: number }) {
+  const cls =
+    rank === 1 ? 'rank-badge rank-badge--gold'
+    : rank === 2 ? 'rank-badge rank-badge--silver'
+    : rank === 3 ? 'rank-badge rank-badge--bronze'
+    : 'rank-badge'
+  return (
+    <span className={cls}>
+      {rank <= 3 && <IconMedal />}
+      #{rank}
+    </span>
+  )
+}
+
 function PriceLevel({ level }: { level: number }) {
   const clamped = Math.min(Math.max(level, 1), 5)
   const labels = ['', 'Rẻ', 'Bình dân', 'Trung bình', 'Khá mắc', 'Cao cấp']
@@ -257,7 +280,6 @@ export default function SearchPage() {
           ) : (
             data.items.map((r, i) => {
               const poi = r.poi
-              const reasons = r.explain?.attributes ?? []
 
               const catParts = [
                 poi?.brand_name,
@@ -267,7 +289,6 @@ export default function SearchPage() {
 
               const locationParts = [
                 poi?.address,
-                poi?.district,
                 poi?.city,
               ].filter(Boolean) as string[]
 
@@ -282,20 +303,38 @@ export default function SearchPage() {
 
               const bodyText = poi?.description || r.text
               const hoursLabel = formatOpenHours(poi?.open_hours ?? null)
-              const hasChips =
-                reasons.length > 0 || (r.attributes?.length ?? 0) > 0
 
-              const hasAnalysis = popularityPct != null || hasChips
+              const explainHardAttrs = r.explain?.hard_attributes ?? {}
+              const explainSignals = r.explain?.ranking_signals ?? []
+              const explainMatched = r.explain?.attributes ?? []
+              const hasExplain =
+                Object.keys(explainHardAttrs).length > 0 ||
+                explainSignals.length > 0 ||
+                explainMatched.length > 0
+
+              const hasAnalysis = hasExplain
 
               return (
                 <div key={i} className="result-card">
+                  {/* ── Two-column layout ── */}
+                  <div className="card-columns">
 
-                  {/* ── Zone 1: Place Info (Google Maps style) ── */}
+                  {/* ── Left (70%): Place Info ── */}
                   <div className="card-place-zone">
                     <div className="card-header">
-                      <span className="rank-badge">#{i + 1}</span>
+                      <RankBadge rank={i + 1} />
                       <h2 className="card-name">{r.name || r.poi_id || r.vector_id}</h2>
                     </div>
+
+                    {(r.attributes?.length ?? 0) > 0 && (
+                      <div className="tag-chips">
+                        {r.attributes.map(a => (
+                          <span key={a} className="tag-chip">{a}</span>
+                        ))}
+                      </div>
+                    )}
+
+                    {bodyText && <p className="card-description">{bodyText}</p>}
 
                     {poi?.rating != null && (
                       <div className="card-rating-row">
@@ -331,47 +370,64 @@ export default function SearchPage() {
                       </p>
                     )}
 
-                    {bodyText && <p className="card-description">{bodyText}</p>}
+                    {popularityPct != null && (
+                      <div className="card-popularity">
+                        <span className="popularity-label-pre">Popularity</span>
+                        <div className="popularity-bar-track">
+                          <div className="popularity-bar-fill" style={{ width: `${popularityPct}%` }} />
+                        </div>
+                        <span className="popularity-label">{popularityPct}%</span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* ── Zone 2: System Analysis (why this result) ── */}
+                  {/* ── Right (30%): System Analysis ── */}
                   {hasAnalysis && (
                     <div className="card-analysis-zone">
                       <div className="analysis-zone-header">
                         <IconBrain />
-                        <span>Lý do hệ thống chọn</span>
+                        <span>Why this result</span>
                       </div>
 
-                      {popularityPct != null && (
-                        <div className="card-popularity">
-                          <span className="popularity-label-pre">Độ phổ biến</span>
-                          <div className="popularity-bar-track">
-                            <div className="popularity-bar-fill" style={{ width: `${popularityPct}%` }} />
+                      {Object.keys(explainHardAttrs).length > 0 && (
+                        <div className="explain-section">
+                          <span className="explain-section-label">Applied filters</span>
+                          <div className="explain-chips">
+                            {Object.entries(explainHardAttrs).map(([k, v]) => (
+                              <span key={k} className="filter-chip">{v}</span>
+                            ))}
                           </div>
-                          <span className="popularity-label">{popularityPct}%</span>
                         </div>
                       )}
 
-                      {reasons.length > 0 && (
-                        <div className="reason-chips">
-                          {reasons.map(name => (
-                            <span key={name} className="reason-chip">
-                              <IconCheck />
-                              {name}
-                            </span>
-                          ))}
+                      {explainSignals.length > 0 && (
+                        <div className="explain-section">
+                          <span className="explain-section-label">Ranking signals</span>
+                          <div className="explain-chips">
+                            {explainSignals.map(s => (
+                              <span key={s} className="signal-chip">{s}</span>
+                            ))}
+                          </div>
                         </div>
                       )}
 
-                      {(r.attributes?.length ?? 0) > 0 && (
-                        <div className="tag-chips">
-                          {r.attributes.map(a => (
-                            <span key={a} className="tag-chip">{a}</span>
-                          ))}
+                      {explainMatched.length > 0 && (
+                        <div className="explain-section">
+                          <span className="explain-section-label">Matched attributes</span>
+                          <div className="reason-chips">
+                            {explainMatched.map(name => (
+                              <span key={name} className="reason-chip">
+                                <IconCheck />
+                                {name}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
                   )}
+
+                  </div>{/* end card-columns */}
                 </div>
               )
             })

@@ -32,8 +32,11 @@ from app.scripts.ingest_poi_data import run_ingest
 from app.scripts.ingest_poi_vectors import ingest_poi_vectors
 
 
+PRISMA_SCHEMA_PATH = "app/prisma/schema.prisma"
+
+
 def _run_prisma(*args: str) -> None:
-    command = [sys.executable, "-m", "prisma", *args]
+    command = [sys.executable, "-m", "prisma", *args, f"--schema={PRISMA_SCHEMA_PATH}"]
     logger.info("$ %s", " ".join(command))
     subprocess.run(command, check=True)
 

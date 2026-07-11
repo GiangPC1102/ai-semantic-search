@@ -67,7 +67,7 @@ def _build_sort_key(
     poi = poi_by_id.get(poi_id) if poi_id else None
 
     keys: list[float] = [
-        _signal_sort_value(poi, signal) for signal in rerank_signals
+        _signal_sort_value(poi, item.signal) for item in rerank_signals
     ]
     keys.append(float(hit.get("score") or float("-inf")))
     return tuple(keys)

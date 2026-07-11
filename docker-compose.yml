@@ -42,6 +42,9 @@ services:
     environment:
       ENV: dev
       PRISMA_HOME_DIR: /opt/prisma
+      PYTHONIOENCODING: utf-8
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
     volumes:
       - ./AICore/app:/app/app
     depends_on:

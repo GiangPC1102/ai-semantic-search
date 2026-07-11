@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from prisma import Prisma
@@ -22,12 +23,22 @@ class StoreError(Exception):
     """Lỗi khi truy vấn database qua Prisma."""
 
 
+@dataclass(frozen=True)
+class HardFilterResult:
+    """POIs after hard-filter, plus whether subcategory filter was kept."""
+
+    pois: list[Poi]
+    subcategory_applied: bool
+
+
 # Process-level cache — signal names are static data seeded at startup.
 _signal_vi_name_cache: dict[str, str] | None = None
 
 
 class Store:
     """Kết nối PostgreSQL và lọc POI theo hard-filter từ query understanding."""
+
+    _FALLBACK_LIMIT = 200
 
     def __init__(self, db: Prisma | None = None) -> None:
         self._db = db if db is not None else Prisma()
@@ -56,7 +67,7 @@ class Store:
         self,
         hard_filters: HardFilters,
         signals: list[RankingSignalItem],
-    ) -> list[Poi]:
+    ) -> HardFilterResult:
         """Lọc POI theo hard-filter và signal ``opening_hours``.
 
         Hard-filter áp dụng trên DB:
@@ -66,7 +77,8 @@ class Store:
         Category / subcategory cascade:
         1. Có ``category`` → filter theo category trước.
         2. Có thêm ``subcategory`` → filter tiếp trên subcategory.
-        3. Nếu subcategory trả về 0 → rollback về kết quả category.
+        3. Nếu subcategory trả về 0 → rollback về kết quả category
+           (``subcategory_applied=False``).
 
         Signal ``opening_hours`` được lọc sau query:
         - ``open_time``: POI phải đang mở tại thời điểm đó
@@ -78,34 +90,49 @@ class Store:
             signals: Danh sách ranking signals (dùng signal ``opening_hours``).
 
         Returns:
-            Danh sách POI thỏa mãn, kèm ``brand`` nếu có.
+            ``HardFilterResult`` với danh sách POI (kèm ``brand``) và flag
+            subcategory.
         """
         await self.connect()
 
         opening_hours_pref = self._extract_opening_hours_preference(signals)
-        pois = await self._query_with_category_rollback(hard_filters)
+        pois, subcategory_applied = await self._query_with_category_rollback(
+            hard_filters,
+        )
 
         if opening_hours_pref is None:
-            return pois
+            return HardFilterResult(
+                pois=pois,
+                subcategory_applied=subcategory_applied,
+            )
 
-        return [
+        filtered = [
             poi
             for poi in pois
             if matches_opening_hours_preference(poi.openHours, opening_hours_pref)
         ]
+        return HardFilterResult(
+            pois=filtered,
+            subcategory_applied=subcategory_applied,
+        )
 
     async def _query_with_category_rollback(
         self,
         hard_filters: HardFilters,
-    ) -> list[Poi]:
-        """Query POI; rollback subcategory → category khi subcategory rỗng."""
+    ) -> tuple[list[Poi], bool]:
+        """Query POI; rollback subcategory → category khi subcategory rỗng.
+
+        Returns:
+            ``(pois, subcategory_applied)``.
+        """
         has_category = bool(hard_filters.category)
         has_subcategory = bool(hard_filters.subcategory)
 
         if not (has_category and has_subcategory):
-            return await self._find_pois(
+            pois = await self._find_pois(
                 self._build_where_clause(hard_filters),
             )
+            return pois, has_subcategory
 
         category_pois = await self._find_pois(
             self._build_where_clause(hard_filters, include_subcategory=False),
@@ -116,16 +143,16 @@ class Store:
             if self._poi_matches_subcategory(poi, hard_filters.subcategory)
         ]
 
-        if not subcategory_pois:
-            logger.info(
-                "Subcategory filter empty (%s); rollback to category (%s) → %s POIs",
-                hard_filters.subcategory,
-                hard_filters.category,
-                len(category_pois),
-            )
-            return category_pois
+        if subcategory_pois:
+            return subcategory_pois, True
 
-        return subcategory_pois
+        logger.info(
+            "Subcategory filter empty (%s); rollback to category (%s) → %s POIs",
+            hard_filters.subcategory,
+            hard_filters.category,
+            len(category_pois),
+        )
+        return category_pois, False
 
     async def _find_pois(self, where_clause: dict[str, Any]) -> list[Poi]:
         """Execute POI find_many with brand include."""
@@ -133,6 +160,7 @@ class Store:
             return await self._db.poi.find_many(
                 where=where_clause or None,
                 include={"brand": True},
+                take=self._FALLBACK_LIMIT,
             )
         except PrismaError as exc:
             logger.error("filter_hard_hint query failed: %s", exc)

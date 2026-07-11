@@ -30,29 +30,48 @@ DEFAULT_BATCH_SIZE = 25
 SAMPLE_POI_LIMIT = 3
 
 SYSTEM_PROMPT = """\
-You are a domain expert writing attribute descriptions for a Vietnamese \
-point-of-interest (POI) map search engine. For every attribute name given, \
-write ONE to TWO sentences IN VIETNAMESE that:
-- explain what the attribute means in the context of a POI (restaurant, cafe, \
-shop, hotel, etc.)
-- weave in natural synonyms and phrasings a Vietnamese user might type when \
-searching (alternate wording, colloquial terms), not just a dictionary definition
+Bạn là chuyên gia domain viết mô tả (description) cho các THUỘC TÍNH (attribute) của POI \
+trong một hệ thống tìm kiếm bản đồ tiếng Việt.
 
-These descriptions are embedded and used for semantic search, so favor rich, \
-search-friendly phrasing over a dry definition. Do not invent facts beyond the \
-attribute name and the example POIs given.
+Mô tả bạn viết sẽ được EMBED và dùng cho semantic search: câu truy vấn tự nhiên của người \
+dùng (ví dụ "quán cà phê yên tĩnh để làm việc") sẽ được so khớp vector với mô tả này để tìm \
+đúng attribute. Vì vậy hãy viết để TỐI ĐA khả năng khớp, KHÔNG viết định nghĩa từ điển khô khan.
 
-Reply with ONLY a JSON array, no prose, no markdown code fence, matching this \
-schema exactly, one object per attribute in the same order as the input:
-[{"name": "<attribute name exactly as given>", "description": "<Vietnamese description>"}]
+Với MỖI attribute, viết một đoạn mô tả liền mạch (3-5 câu) tiếng Việt gồm đủ 3 phần:
+1. Bắt đầu bằng CHÍNH tên attribute (giữ nguyên văn), theo sau là một câu giải nghĩa ngắn \
+trong ngữ cảnh POI (nhà hàng, quán cà phê, khách sạn, cửa hàng...).
+2. Liệt kê các cách người Việt DIỄN ĐẠT/GÕ khi tìm kiếm: từ đồng nghĩa, khẩu ngữ, thuật ngữ \
+tiếng Anh tương đương, viết tắt, biến thể vùng miền Bắc/Nam, cách viết/gõ phổ biến khác.
+3. Chèn 3-5 CÂU TRUY VẤN MẪU đúng giọng người dùng thật sẽ gõ khi tìm kiếm (ví dụ: "chỗ nào \
+yên tĩnh học bài", "cafe ngồi làm việc lâu được không ồn").
 
-Example input:
-- "có wifi miễn phí" (ví dụ POI: Highlands Coffee [Cafe], The Coffee House [Cafe])
-- "phù hợp gia đình" (ví dụ POI: Pizza 4P's [Nhà hàng], Vincom Mega Mall [Trung tâm thương mại])
+QUAN TRỌNG — TÍNH PHÂN BIỆT: Bạn sẽ được cung cấp TOÀN BỘ danh sách attribute hiện có trong \
+hệ thống. Hãy viết mô tả của attribute đang xử lý sao cho KHÁC BIỆT rõ ràng với các attribute \
+còn lại trong danh sách đó — tránh dùng chung các từ khóa/cụm từ dễ gây nhầm lẫn (ví dụ: phân \
+biệt "check-in" [chụp ảnh sống ảo] với thủ tục nhận phòng khách sạn; phân biệt "yên tĩnh", \
+"phù hợp làm việc", "wifi" — dù có thể đi cùng nhau trong thực tế, mỗi mô tả phải nhấn vào \
+khía cạnh RIÊNG của chính attribute đó).
 
-Example output:
-[{"name": "có wifi miễn phí", "description": "Địa điểm cung cấp wifi miễn phí cho khách, phù hợp khi tìm quán có mạng, wifi free, internet không tính phí để làm việc hoặc học tập."}, \
-{"name": "phù hợp gia đình", "description": "Địa điểm thân thiện với gia đình có trẻ nhỏ, phù hợp đi cùng con cái, không gian rộng rãi, thoải mái cho các buổi họp mặt gia đình hoặc đi chơi cuối tuần."}]
+KHÔNG bịa đặt sự kiện/tính năng ngoài ý nghĩa thật của attribute. Được phép liệt kê các cách \
+diễn đạt tương đương và câu truy vấn mẫu.
+
+Trả lời DUY NHẤT một JSON object, không prose, không markdown code fence, đúng schema sau, \
+các phần tử trong "items" theo ĐÚNG thứ tự các attribute được liệt kê trong phần \
+"Attributes cần viết mô tả" của user message:
+{"items": [{"name": "<tên attribute nguyên văn>", "description": "<mô tả tiếng Việt>"}]}
+
+Ví dụ input:
+Toàn bộ attribute trong hệ thống: yên tĩnh, wifi, phù hợp làm việc, phù hợp gia đình, check-in, 24/7
+
+Attributes cần viết mô tả:
+- "yên tĩnh" (áp dụng cho: Quán cà phê, Khách sạn)
+- "phù hợp gia đình" (áp dụng cho: Nhà hàng, Khách sạn, Điểm tham quan)
+
+Ví dụ output:
+{"items": [\
+{"name": "yên tĩnh", "description": "yên tĩnh: không gian ít ồn ào, tĩnh lặng, riêng tư, phù hợp tập trung, khác với các attribute về tiện ích như wifi hay không gian chụp ảnh. Người dùng thường gõ: quán yên tĩnh, chỗ vắng người, không gian tĩnh, quiet, tránh ồn ào, ngồi lâu không bị làm phiền. Ví dụ truy vấn: 'quán cà phê yên tĩnh để làm việc', 'chỗ nào yên tĩnh học bài', 'quán vắng ngồi đọc sách'."}, \
+{"name": "phù hợp gia đình", "description": "phù hợp gia đình: địa điểm thân thiện, thoải mái để đi cùng người thân, đặc biệt có trẻ nhỏ hoặc người lớn tuổi, khác với các attribute về không gian riêng tư như lãng mạn hay yên tĩnh làm việc. Người dùng thường gõ: chỗ cho gia đình, đi cùng con nhỏ, family friendly, có khu vui chơi trẻ em, phù hợp trẻ em. Ví dụ truy vấn: 'nhà hàng cho gia đình có trẻ nhỏ', 'quán ăn đi cùng cả nhà', 'chỗ chơi cho bé cuối tuần'."}\
+]}
 """
 
 _JSON_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -65,51 +84,73 @@ async def _fetch_attributes(db: Prisma, only_null: bool, limit: int | None) -> l
     return attributes[:limit] if limit else attributes
 
 
-async def _fetch_sample_poi_labels(db: Prisma, attribute_id: str) -> list[str]:
-    """Fetch a few POI names (with category) linked to this attribute, for grounding."""
+async def _fetch_all_attribute_names(db: Prisma) -> list[str]:
+    """Load every attribute name in the system, for contrastive grounding."""
+    attributes = await db.attribute.find_many(order={"attributeName": "asc"})
+    return [attr.attributeName for attr in attributes]
+
+
+async def _fetch_sample_categories(db: Prisma, attribute_id: str) -> list[str]:
+    """Fetch distinct POI categories linked to this attribute, for grounding.
+
+    Categories are less noisy than brand/POI names — they signal *where* an
+    attribute applies without dragging brand identity into the description.
+    """
     links = await db.poiattribute.find_many(
         where={"attributeId": attribute_id},
         include={"poi": {"include": {"brand": True}}},
-        take=SAMPLE_POI_LIMIT,
+        take=SAMPLE_POI_LIMIT * 5,
     )
-    labels: list[str] = []
+    categories: list[str] = []
     for link in links:
         poi = link.poi
-        if poi is None:
-            continue
-        category = poi.brand.category if poi.brand and poi.brand.category else None
-        labels.append(f"{poi.name} [{category}]" if category else poi.name)
-    return labels
+        category = poi.brand.category if poi and poi.brand and poi.brand.category else None
+        if category and category not in categories:
+            categories.append(category)
+        if len(categories) >= SAMPLE_POI_LIMIT:
+            break
+    return categories
 
 
-def _format_attribute_line(name: str, samples: list[str]) -> str:
-    if samples:
-        return f'- "{name}" (ví dụ POI: {", ".join(samples)})'
+def _format_attribute_line(name: str, categories: list[str]) -> str:
+    if categories:
+        return f'- "{name}" (áp dụng cho: {", ".join(categories)})'
     return f'- "{name}"'
 
 
 def _parse_llm_json(content: str) -> list[dict[str, str]]:
     cleaned = _JSON_FENCE_PATTERN.sub("", content.strip())
     parsed = json.loads(cleaned)
+    if isinstance(parsed, dict):
+        parsed = parsed.get("items")
     if not isinstance(parsed, list):
-        raise ValueError("LLM response is not a JSON array")
+        raise ValueError("LLM response is not a JSON array under 'items'")
     return parsed
 
 
 async def _generate_batch(
     llm: LLM,
     batch: list[tuple[Attribute, list[str]]],
+    all_names: list[str],
 ) -> dict[str, str]:
     """Call the LLM once for a batch of attributes; returns name -> description."""
-    user_message = "\n".join(
-        _format_attribute_line(attr.attributeName, samples) for attr, samples in batch
+    attribute_lines = "\n".join(
+        _format_attribute_line(attr.attributeName, categories) for attr, categories in batch
+    )
+    user_message = (
+        f"Toàn bộ attribute trong hệ thống: {', '.join(all_names)}\n\n"
+        f"Attributes cần viết mô tả:\n{attribute_lines}"
     )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_message},
     ]
 
-    response = await asyncio.to_thread(llm.chat, messages)
+    response = await asyncio.to_thread(
+        llm.chat,
+        messages,
+        response_format={"type": "json_object"},
+    )
     items = _parse_llm_json(response.content)
 
     result: dict[str, str] = {}
@@ -147,6 +188,8 @@ async def generate_attribute_descriptions(
             logger.warning("No attribute to process — nothing to generate")
             return 0
 
+        all_names = await _fetch_all_attribute_names(db)
+
         logger.info(
             "Generating descriptions for %s attributes (only_null=%s, batch_size=%s)",
             len(attributes),
@@ -155,13 +198,13 @@ async def generate_attribute_descriptions(
         )
 
         enriched: list[tuple[Attribute, list[str]]] = [
-            (attr, await _fetch_sample_poi_labels(db, attr.id)) for attr in attributes
+            (attr, await _fetch_sample_categories(db, attr.id)) for attr in attributes
         ]
 
         for start in range(0, len(enriched), batch_size):
             batch = enriched[start : start + batch_size]
             try:
-                descriptions = await _generate_batch(llm, batch)
+                descriptions = await _generate_batch(llm, batch, all_names)
             except (LLMError, ValueError, json.JSONDecodeError) as exc:
                 logger.error(
                     "Batch %s-%s failed (%s) — retrying once",
@@ -170,7 +213,7 @@ async def generate_attribute_descriptions(
                     exc,
                 )
                 try:
-                    descriptions = await _generate_batch(llm, batch)
+                    descriptions = await _generate_batch(llm, batch, all_names)
                 except (LLMError, ValueError, json.JSONDecodeError) as retry_exc:
                     logger.error(
                         "Batch %s-%s failed again, skipping (%s)",

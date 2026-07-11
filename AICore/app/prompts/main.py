@@ -137,7 +137,6 @@ Inference rules (fill only when confident):
 - "mở sau 11 giờ tối" / "opens after 11pm" → open_time: "23:00"
 - "còn mở lúc 23:00" / "still open at 11pm" → close_time: "23:00"
 - "mở đến 2h sáng" / "open until 2am" → close_time: "02:00"
-- "mở khuya" / "mở cửa muộn" / "open late" → close_time: "23:00" or "00:00"
 - "24/7" / "cả ngày" / "all day" → is_24h: true
 - Vague phrases like "tonight" / "this morning" → leave open_time and close_time null
 

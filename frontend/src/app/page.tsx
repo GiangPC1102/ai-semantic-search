@@ -11,6 +11,21 @@ interface TascoSearchItem {
   matched_attribute_count: number
   matched_attribute_ids: string[]
   payload: Record<string, unknown>
+  // Extended POI fields — all optional; render only when present
+  rating: number | null
+  brand: string | null
+  category: string | null
+  sub_category: string | null
+  city: string | null
+  district: string | null
+  address: string | null
+  review_count: number | null
+  popularity_score: number | null
+  price_level: number | null
+  opening_hours: string | null
+  attributes: string[] | null
+  tags: string[] | null
+  description: string | null
 }
 
 interface RankingSignal {
@@ -98,6 +113,9 @@ export default function SearchPage() {
     ? Math.max(...data.items.map(r => r.score ?? 0), 0.001)
     : 1
 
+  // Set of signal names present in this query — used to gate stat display per result.
+  const activeSignals = new Set(data?.ranking_signals.map(s => s.signal) ?? [])
+
   return (
     <main className="page">
         <p className="eyebrow">TASCO AI · POI Search</p>
@@ -175,8 +193,18 @@ export default function SearchPage() {
                   .map(id => attrMap[id])
                   .filter(Boolean) as string[]
 
+                const cats = [r.brand, r.category, r.sub_category].filter(Boolean) as string[]
+                const locationParts = [r.address, r.district, r.city].filter(Boolean) as string[]
+                const showRating = activeSignals.has('rating') && r.rating != null
+                const showReviewCount = activeSignals.has('review_count') && r.review_count != null
+                const showPopularity = activeSignals.has('popularity_score') && r.popularity_score != null
+                const showPrice = activeSignals.has('price_level') && r.price_level != null
+                const priceStr = showPrice ? '$'.repeat(Math.min(r.price_level!, 4)) : null
+                const bodyText = r.description || r.text
+
                 return (
                   <div key={i} className="result-card">
+                    {/* Header: rank + name + score bar */}
                     <div className="result-meta">
                       <div className="result-rank-name">
                         <span className="rank-badge">#{i + 1}</span>
@@ -192,12 +220,54 @@ export default function SearchPage() {
                         <span className="result-score">{pct}%</span>
                       </div>
                     </div>
-                    {r.text && <p className="result-text">{r.text}</p>}
+
+                    {/* Category / brand chips */}
+                    {cats.length > 0 && (
+                      <div className="result-cats">
+                        {cats.map(c => <span key={c} className="result-cat-chip">{c}</span>)}
+                      </div>
+                    )}
+
+                    {/* Location */}
+                    {locationParts.length > 0 && (
+                      <p className="result-location">📍 {locationParts.join(', ')}</p>
+                    )}
+
+                    {/* Stats — only rendered when the signal was identified for this query */}
+                    {(showRating || priceStr || showPopularity) && (
+                      <div className="result-stats">
+                        {showRating && (
+                          <span className="stat-item">★ {r.rating!.toFixed(1)}{showReviewCount ? ` (${r.review_count!.toLocaleString()})` : ''}</span>
+                        )}
+                        {priceStr && <span className="stat-item stat-price">{priceStr}</span>}
+                        {showPopularity && (
+                          <span className="stat-item">🔥 {(r.popularity_score! * 100).toFixed(0)}%</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Opening hours */}
+                    {r.opening_hours && (
+                      <p className="result-hours">⏰ {r.opening_hours}</p>
+                    )}
+
+                    {/* Description / text */}
+                    {bodyText && <p className="result-text">{bodyText}</p>}
+
+                    {/* Matched attribute chips (relevance reasons) */}
                     {reasons.length > 0 && (
                       <div className="reason-chips">
                         {reasons.map(name => (
                           <span key={name} className="reason-chip">✓ {name}</span>
                         ))}
+                      </div>
+                    )}
+
+                    {/* Extra attributes & tags */}
+                    {((r.attributes?.length ?? 0) > 0 || (r.tags?.length ?? 0) > 0) && (
+                      <div className="tag-chips">
+                        {(r.attributes ?? []).map(a => <span key={a} className="tag-chip">{a}</span>)}
+                        {(r.tags ?? []).map(t => <span key={t} className="tag-chip tag-chip--tag">{t}</span>)}
                       </div>
                     )}
                   </div>

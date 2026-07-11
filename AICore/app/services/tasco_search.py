@@ -56,16 +56,14 @@ class TascoSearchService:
         resolved_poi_top_k = poi_top_k or settings.TASCO_POI_TOP_K
         resolved_attr_top_k = attribute_top_k or settings.TASCO_ATTRIBUTE_TOP_K
 
+        # LLM call and signal DB fetch are independent — run in parallel.
         try:
-            understood = await asyncio.to_thread(
-                self._understander.understand,
-                query,
+            understood, signal_vi_map = await asyncio.gather(
+                asyncio.to_thread(self._understander.understand, query),
+                self._store.get_signal_vietnam_names(),
             )
         except QueryUnderstandError as exc:
             raise TascoSearchError(str(exc)) from exc
-
-        try:
-            signal_vi_map = await self._store.get_signal_vietnam_names()
         except StoreError as exc:
             raise TascoSearchError(str(exc)) from exc
         understood = self._enrich_signals_with_vi_names(understood, signal_vi_map)
@@ -95,6 +93,15 @@ class TascoSearchService:
                 hard_filtered_poi_count=len(filtered_pois),
             )
 
+        # Embed once — reused for both POI and attribute searches.
+        try:
+            query_emb = await asyncio.to_thread(
+                self._vector_store.embed_query,
+                search_query,
+            )
+        except VectorStoreError as exc:
+            raise TascoSearchError(str(exc)) from exc
+
         try:
             poi_hits, attribute_hits = await asyncio.gather(
                 asyncio.to_thread(
@@ -106,6 +113,7 @@ class TascoSearchService:
                     None,
                     None,
                     vector_ids,
+                    query_emb,
                 ),
                 asyncio.to_thread(
                     self._vector_store.search,
@@ -116,6 +124,7 @@ class TascoSearchService:
                     None,
                     None,
                     None,
+                    query_emb,
                 ),
             )
         except VectorStoreError as exc:

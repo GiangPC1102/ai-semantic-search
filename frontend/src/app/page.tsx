@@ -9,12 +9,14 @@ interface TascoSearchItem {
   text: string | null
   score: number | null
   matched_attribute_count: number
+  matched_attribute_ids: string[]
   payload: Record<string, unknown>
 }
 
 interface RankingSignal {
   signal: string
   confidence: number
+  signal_name_vi: string | null
 }
 
 interface HardFilters {
@@ -25,11 +27,18 @@ interface HardFilters {
   district: string | null
 }
 
+interface AttributeHit {
+  id: string
+  attribute_id: string | null
+  name: string | null
+}
+
 interface SearchResponse {
   original_query: string
   normalized_query: string
   hard_filters: HardFilters
   ranking_signals: RankingSignal[]
+  attribute_hits: AttributeHit[]
   count: number
   items: TascoSearchItem[]
 }
@@ -75,6 +84,19 @@ export default function SearchPage() {
   }
 
   const filters = data ? activeFilters(data.hard_filters) : ''
+
+  // Build attribute id → display name map from the global attribute hits list.
+  const attrMap: Record<string, string> = {}
+  if (data) {
+    for (const h of data.attribute_hits) {
+      if (h.attribute_id && h.name) attrMap[h.attribute_id] = h.name
+    }
+  }
+
+  // Normalise scores relative to the top result so the bar is always meaningful.
+  const maxScore = data
+    ? Math.max(...data.items.map(r => r.score ?? 0), 0.001)
+    : 1
 
   return (
     <main className="page">
@@ -132,7 +154,7 @@ export default function SearchPage() {
                 <div className="signals-wrap">
                   {data.ranking_signals.map((s, i) => (
                     <span key={i} className="signal-chip">
-                      {s.signal} {(s.confidence * 100).toFixed(0)}%
+                      {s.signal_name_vi || s.signal} {(s.confidence * 100).toFixed(0)}%
                     </span>
                   ))}
                 </div>
@@ -147,22 +169,37 @@ export default function SearchPage() {
                 <small>Thử thay đổi từ khoá hoặc bỏ bớt tiêu chí lọc.</small>
               </div>
             ) : (
-              data.items.map((r, i) => (
-                <div key={i} className="result-card">
-                  <div className="result-meta">
-                    <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
-                    <div className="result-badges">
-                      {r.matched_attribute_count > 0 && (
-                        <span className="attr-badge">{r.matched_attribute_count} attr</span>
-                      )}
-                      {r.score !== null && (
-                        <span className="result-score">{r.score.toFixed(4)}</span>
-                      )}
+              data.items.map((r, i) => {
+                const pct = Math.round(((r.score ?? 0) / maxScore) * 100)
+                const reasons = (r.matched_attribute_ids ?? [])
+                  .map(id => attrMap[id])
+                  .filter(Boolean) as string[]
+
+                return (
+                  <div key={i} className="result-card">
+                    <div className="result-meta">
+                      <div className="result-rank-name">
+                        <span className="rank-badge">#{i + 1}</span>
+                        <span className="result-name">{r.name || r.poi_id || r.vector_id}</span>
+                      </div>
+                      <div className="result-score-wrap">
+                        <div className="relevance-bar">
+                          <div className="relevance-fill" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="result-score">{pct}%</span>
+                      </div>
                     </div>
+                    {r.text && <p className="result-text">{r.text}</p>}
+                    {reasons.length > 0 && (
+                      <div className="reason-chips">
+                        {reasons.map(name => (
+                          <span key={name} className="reason-chip">✓ {name}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {r.text && <p className="result-text">{r.text}</p>}
-                </div>
-              ))
+                )
+              })
             )}
           </>
         )}

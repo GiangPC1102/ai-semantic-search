@@ -75,8 +75,30 @@ Normalize the raw query into a clear, natural Vietnamese sentence suitable for P
 - Do not invent new requirements; do not drop important user constraints
 
 ## 1. Hard filters (fill ONLY when confidently extractable from the query)
+
+GOLDEN RULE — target vs. context:
+A query often names more than one place/feature. Only the noun phrase the user
+is actually SEARCHING FOR (the head/target) may fill brand/category/subcategory.
+A phrase that follows "có / với / nhiều / kèm / phục vụ" (has/with/many/serving)
+describes a FEATURE the target should contain — it is context, NEVER the
+category, even if it names an obvious POI type.
+  "nơi mua sắm có nhiều nhà hàng gần quận 1"
+    → target = "nơi mua sắm" → category "Trung tâm thương mại"
+    → "nhiều nhà hàng" is a feature of the target, NOT the category
+    → district "Quận 1" (locational: "gần" + place)
+  "nhà hàng trong trung tâm thương mại ở quận 1" (reversed)
+    → target = "nhà hàng" → category "Nhà hàng"
+    → "trung tâm thương mại" here is the target's location/container, not a
+      separate category to extract
+If it's unclear which phrase is the target, leave category/subcategory null
+rather than guessing.
+
+- category: MUST be exactly one of this list, or null — never invent a new
+  value or return a phrase not in this list:
+  ["Quán cà phê", "Nhà hàng", "Bệnh viện", "Khách sạn", "Trung tâm thương mại",
+   "ATM", "Trạm xăng", "Điểm tham quan", "Rạp phim", "Công viên",
+   "Trạm sạc điện", "Nhà thuốc"]
 - brand: canonical brand name (e.g. "Highlands Coffee", "Starbucks", "Phúc Long")
-- category: top-level POI type (e.g. "Quán cà phê", "Nhà hàng", "Bệnh viện", "Khách sạn", "Trung tâm thương mại", "ATM", "Trạm xăng", "Điểm tham quan", "Rạp phim", "Công viên", "Trạm sạc điện", "Nhà thuốc")
 - subcategory: second-level POI type (e.g. "Coffee Chain", "Specialty Coffee", "Lẩu")
 - city: city (e.g. "HCM", "Hà Nội", "Đà Nẵng", "Đà Lạt")
 - district: district (e.g. "Quận 1", "Hoàn Kiếm", "Cầu Giấy")
